@@ -1494,24 +1494,40 @@ cmd_test() {
       continue
     fi
 
-    # Test endpoint: try HTTP first, fall back to TCP connect check
-    # Many API servers (e.g. api.z.ai) reject bare GET with HTTP/2
-    # errors but are fully operational for real API calls
-    local http_code
-    http_code=$(curl -s --max-time 5 -o /dev/null -w "%{http_code}" "$test_url" 2>/dev/null) || http_code=""
-    
-    # Check for successful HTTP responses (2xx) - only these are truly "reachable"
+    # Test with a real API call to /v1/messages (minimal request, max_tokens=1)
+    # This validates: endpoint reachability, correct URL, and API key validity
+    local api_key="${!keyvar:-}"
+    local api_url="${test_url%/}/v1/messages"
+    local http_code body
+    body=$(curl -s --max-time 8 -w "\n%{http_code}" \
+      -X POST "$api_url" \
+      -H "content-type: application/json" \
+      -H "x-api-key: $api_key" \
+      -H "anthropic-version: 2023-06-01" \
+      -d '{"model":"claude-sonnet-4-20250514","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}' \
+      2>/dev/null) || body=""
+    http_code="${body##*$'\n'}"
+    body="${body%$'\n'*}"
+
     if [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+      echo -e "${GREEN}${SYM_OK} ok${NC} ${DIM}(API key valid)${NC}"
+      ((++ok)) || true
+    elif [[ "$http_code" == "401" || "$http_code" == "403" ]]; then
+      echo -e "${RED}${SYM_ERR} auth failed${NC} ${DIM}(HTTP $http_code — check API key)${NC}"
+      ((++fail)) || true
+    elif [[ "$http_code" == "404" ]]; then
+      echo -e "${RED}${SYM_ERR} endpoint not found${NC} ${DIM}(HTTP 404 — check base URL)${NC}"
+      ((++fail)) || true
+    elif [[ "$http_code" =~ ^4[0-9][0-9]$ ]]; then
+      # 400, 429, etc. — server is reachable, key accepted but request issue
       echo -e "${GREEN}${SYM_OK} reachable${NC} ${DIM}(HTTP $http_code)${NC}"
       ((++ok)) || true
-    elif [[ "$http_code" =~ ^[0-9][0-9][0-9]$ ]]; then
-      # 4xx (401, 403, 404) or 5xx errors - endpoint exists but has issues
-      echo -e "${RED}${SYM_ERR} error${NC} ${DIM}(HTTP $http_code)${NC}"
+    elif [[ "$http_code" =~ ^5[0-9][0-9]$ ]]; then
+      echo -e "${RED}${SYM_ERR} server error${NC} ${DIM}(HTTP $http_code)${NC}"
       ((++fail)) || true
     else
-      # HTTP failed or curl crashed -- fall back to TCP connect
+      # No HTTP response — fall back to TCP connect
       local host; host=$(echo "$test_url" | sed 's|https\?://\([^/:]*\).*|\1|')
-      # Validate hostname before TCP attempt
       if [[ ! "$host" =~ ^[a-zA-Z0-9._-]+$ ]]; then
         echo -e "${RED}${SYM_ERR} invalid hostname${NC}"
         ((++fail)) || true
@@ -1520,8 +1536,8 @@ cmd_test() {
       local port=443
       [[ "$test_url" =~ http:// ]] && port=80
       if timeout 3 bash -c "echo >/dev/tcp/\$1/\$2" _ "$host" "$port" 2>/dev/null; then
-        echo -e "${GREEN}${SYM_OK} connected${NC} ${DIM}(TCP ok)${NC}"
-        ((++ok)) || true
+        echo -e "${YELLOW}${SYM_WARN} TCP ok${NC} ${DIM}(API unreachable)${NC}"
+        ((++fail)) || true
       else
         echo -e "${RED}${SYM_ERR} unreachable${NC}"
         ((++fail)) || true
