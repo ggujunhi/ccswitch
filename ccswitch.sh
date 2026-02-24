@@ -1742,8 +1742,9 @@ default_force() {
 
   # Create wrapper script
   # On Windows: claude.exe is renamed away, so 'claude' (no ext) is found first by bash
-  # On Unix: overwrites the original claude binary
+  # On Unix: rm first to release the inode (avoids "Text file busy" on running binary)
   # Note: shebang is written separately to survive build.sh strip_module
+  rm -f "$BIN_DIR/claude"
   printf '%s\n' '#!/usr/bin/env bash' > "$BIN_DIR/claude"
   cat >> "$BIN_DIR/claude" << WRAPPER
 set -euo pipefail
