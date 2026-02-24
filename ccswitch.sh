@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# CCSWITCH v1.1.0 - Multi-provider launcher for Claude CLI
+# CCSWITCH v1.2.0 - Multi-provider launcher for Claude CLI
 # =============================================================================
 # A CLI tool to manage and switch between different LLM providers
 # for the Claude Code command-line interface.
@@ -13,7 +13,7 @@ set -euo pipefail
 IFS=$'\n\t'
 umask 077
 
-readonly VERSION="1.1.0"
+readonly VERSION="1.2.0"
 readonly CCSWITCH_DOCS="https://github.com/ggujunhi/ccswitch"
 readonly CCSWITCH_RAW="https://raw.githubusercontent.com/ggujunhi/ccswitch/main/ccswitch.sh"
 readonly UPDATE_CHECK_INTERVAL=86400  # 24 hours
@@ -323,6 +323,114 @@ mask_key() {
   echo "${key:0:4}****${key: -4}"
 }
 
+delete_secret() {
+  local key="$1"
+  [[ ! -f "$SECRETS_FILE" ]] && return 0
+  local tmp; tmp=$(mktemp "${SECRETS_FILE}.XXXXXX")
+  grep -v "^${key}=" "$SECRETS_FILE" > "$tmp" 2>/dev/null || true
+  mv "$tmp" "$SECRETS_FILE"
+  chmod 600 "$SECRETS_FILE"
+}
+
+cmd_keys() {
+  local action="${1:-list}"
+  local target="${2:-}"
+
+  load_secrets
+
+  case "$action" in
+    list)
+      echo
+      echo -e "${BOLD}API Keys${NC}"
+      draw_separator 50
+      local found=0
+      local all_providers=(zai zai-cn minimax minimax-cn kimi moonshot ve deepseek mimo)
+      for p in "${all_providers[@]}"; do
+        local def; def=$(get_provider_def "$p")
+        [[ -z "$def" ]] && continue
+        IFS='|' read -r keyvar _ _ _ desc <<< "$def"
+        [[ -z "$keyvar" || "$keyvar" == @* ]] && continue
+        local val="${!keyvar:-}"
+        if [[ -n "$val" ]]; then
+          printf "  ${GREEN}%-12s${NC} %-20s %s\n" "$p" "$desc" "$(mask_key "$val")"
+          ((++found)) || true
+        else
+          printf "  ${DIM}%-12s${NC} %-20s %s\n" "$p" "$desc" "${DIM}not set${NC}"
+        fi
+      done
+      # OpenRouter
+      if [[ -n "${OPENROUTER_API_KEY:-}" ]]; then
+        printf "  ${GREEN}%-12s${NC} %-20s %s\n" "openrouter" "OpenRouter" "$(mask_key "$OPENROUTER_API_KEY")"
+        ((++found)) || true
+      else
+        printf "  ${DIM}%-12s${NC} %-20s %s\n" "openrouter" "OpenRouter" "${DIM}not set${NC}"
+      fi
+      # Custom base URLs
+      if [[ -f "$SECRETS_FILE" ]]; then
+        while IFS='=' read -r k _; do
+          if [[ "$k" == CCSWITCH_*_BASE_URL ]]; then
+            local cname="${k#CCSWITCH_}"
+            cname="${cname%_BASE_URL}"
+            cname=$(echo "$cname" | tr '[:upper:]' '[:lower:]')
+            local ckey_var="${cname^^}_API_KEY"
+            local cval="${!ckey_var:-}"
+            printf "  ${GREEN}%-12s${NC} %-20s %s\n" "$cname" "Custom" "$(mask_key "$cval")"
+            ((++found)) || true
+          fi
+        done < "$SECRETS_FILE"
+      fi
+      echo
+      echo -e "${DIM}$found key(s) configured${NC}"
+      echo
+      echo -e "  ${DIM}Manage: ccswitch keys set <provider>${NC}"
+      echo -e "  ${DIM}Delete: ccswitch keys delete <provider>${NC}"
+      ;;
+
+    set)
+      if [[ -z "$target" ]]; then
+        error "Usage: ccswitch keys set <provider>"
+        return 1
+      fi
+      # Delegate to config
+      cmd_config "$target"
+      ;;
+
+    delete|remove|rm)
+      if [[ -z "$target" ]]; then
+        error "Usage: ccswitch keys delete <provider>"
+        return 1
+      fi
+      local def; def=$(get_provider_def "$target")
+      local keyvar=""
+      if [[ -n "$def" ]]; then
+        IFS='|' read -r keyvar _ _ _ _ <<< "$def"
+      elif [[ "$target" == "openrouter" ]]; then
+        keyvar="OPENROUTER_API_KEY"
+      fi
+      if [[ -z "$keyvar" || "$keyvar" == @* ]]; then
+        error "Provider '$target' does not use an API key"
+        return 1
+      fi
+      if [[ -z "${!keyvar:-}" ]]; then
+        warn "No API key set for '$target'"
+        return 0
+      fi
+      confirm "Delete API key for $target?" || { log "Cancelled"; return 0; }
+      delete_secret "$keyvar"
+      # Also delete custom base URL if exists
+      local base_url_key="CCSWITCH_${keyvar%_API_KEY}_BASE_URL"
+      delete_secret "$base_url_key" 2>/dev/null || true
+      success "API key for '$target' deleted"
+      suggest_next "Reconfigure: ${GREEN}ccswitch config $target${NC}"
+      ;;
+
+    *)
+      error "Unknown action: $action"
+      echo -e "Usage: ccswitch keys [list|set|delete] [provider]"
+      ;;
+  esac
+}
+
 # =============================================================================
 # MIGRATION FROM CLOTHER
 # =============================================================================
@@ -434,9 +542,11 @@ ${BOLD}Usage:${NC} ccswitch [options] <command>
 
 ${BOLD}Commands:${NC}
   config       Configure a provider
+  keys         Manage API keys (list/set/delete)
   list         List profiles
   info <name>  Provider details
   test         Test providers
+  update       Check for updates
   help         Show full help
 
 ${BOLD}Examples:${NC}
@@ -466,6 +576,9 @@ ${BOLD}EXAMPLES${NC}
 
 ${BOLD}COMMANDS${NC}
   config [provider]    Configure a provider (interactive if no provider given)
+  keys                 List all API keys (masked)
+  keys set <provider>  Set/update an API key
+  keys delete <prov>   Delete an API key
   list                 List all configured profiles
   info <provider>      Show details for a provider
   test [provider]      Test provider connectivity
@@ -1031,15 +1144,23 @@ cmd_test() {
       continue
     fi
 
-    # Test endpoint reachability (any HTTP response = reachable)
-    local http_code
+    # Test endpoint: try HTTP first, fall back to TLS-connect check
+    # Many API servers reject bare GET but are fully operational
+    local http_code tls_time
     http_code=$(curl -s --max-time 5 -o /dev/null -w "%{http_code}" "$test_url" 2>/dev/null) || http_code="000"
     if [[ "$http_code" != "000" ]]; then
       echo -e "${GREEN}${SYM_OK} reachable${NC} ${DIM}(HTTP $http_code)${NC}"
       ((++ok)) || true
     else
-      echo -e "${RED}${SYM_ERR} unreachable${NC}"
-      ((++fail)) || true
+      # HTTP failed (stream error, etc.) -- check if TLS handshake works
+      tls_time=$(curl -s --max-time 5 -o /dev/null -w "%{time_appconnect}" "$test_url" 2>/dev/null) || tls_time="0"
+      if [[ "$tls_time" != "0" && "$tls_time" != "0.000000" ]]; then
+        echo -e "${GREEN}${SYM_OK} connected${NC} ${DIM}(TLS ok)${NC}"
+        ((++ok)) || true
+      else
+        echo -e "${RED}${SYM_ERR} unreachable${NC}"
+        ((++fail)) || true
+      fi
     fi
   done
 
@@ -1486,6 +1607,7 @@ main() {
     list)       cmd_list "$@" ;;
     info)       cmd_info "$@" ;;
     test)       cmd_test "$@" ;;
+    keys)       cmd_keys "$@" ;;
     status)     cmd_status "$@" ;;
     uninstall)  cmd_uninstall "$@" ;;
     update)     cmd_update ;;
