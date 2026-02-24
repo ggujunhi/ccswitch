@@ -18,7 +18,7 @@ set -euo pipefail
 IFS=$'\n\t'
 umask 077
 
-readonly VERSION="1.5.0"
+readonly VERSION="1.5.1"
 readonly CCSWITCH_DOCS="https://github.com/ggujunhi/ccswitch"
 readonly CCSWITCH_RAW="https://raw.githubusercontent.com/ggujunhi/ccswitch/main/ccswitch.sh"
 readonly REGISTRY_URL="https://raw.githubusercontent.com/ggujunhi/ccswitch/main/models.json"
@@ -1022,20 +1022,28 @@ ${BOLD}USAGE${NC}
   ccswitch default                       # Show current default
   ccswitch default <provider>            # Shell hook (interactive shells only)
   ccswitch default --force <provider>    # Wrap claude binary (ALL contexts)
-  ccswitch default reset                 # Restore native claude
+  ccswitch default -f -b <provider>      # Wrap + bypass permissions
+  ccswitch default reset                 # Restore everything
+
+${BOLD}FLAGS${NC}
+  --force, -f    Replace claude binary with routing wrapper
+  --bypass, -b   Set bypassPermissions in ~/.claude/settings.json
 
 ${BOLD}MODES${NC}
   ${DIM}Hook (default):${NC}   Shell function in .bashrc/.zshrc. Only interactive shells.
   ${DIM}Force (--force):${NC}  Replaces claude binary with wrapper. Works everywhere
                     including OMC agents, subprocesses, and scripts.
+  ${DIM}Bypass (--bypass):${NC} Auto-approve all tool calls (deny list still enforced).
 
 ${BOLD}EXAMPLES${NC}
-  ${GREEN}ccswitch default zai${NC}             # Hook mode
-  ${GREEN}ccswitch default --force zai${NC}     # Force mode (OMC compatible)
-  ${GREEN}ccswitch default reset${NC}           # Restore native Anthropic
+  ${GREEN}ccswitch default zai${NC}              # Hook mode
+  ${GREEN}ccswitch default --force zai${NC}      # Force mode (OMC compatible)
+  ${GREEN}ccswitch default -f -b zai${NC}        # Force + bypass (full auto)
+  ${GREEN}ccswitch default reset${NC}            # Restore native + permissions
 
 ${BOLD}NOTES${NC}
   Force mode backs up claude as 'claude-original' and creates a wrapper.
+  Bypass mode backs up settings.json and restores on reset.
   Per-session override: ${GREEN}export CCSWITCH_DEFAULT_PROVIDER=zai${NC}
 EOF
       ;;
@@ -1492,16 +1500,17 @@ cmd_status() {
 
 # Source lib files
 
+# Claude settings file
+CLAUDE_SETTINGS="${HOME}/.claude/settings.json"
+
 # DEFAULT PROVIDER COMMAND
 
 # Locate the real claude binary (skipping any ccswitch wrapper)
 find_real_claude() {
-  # If we already backed up the original, use that
   if [[ -f "$BIN_DIR/claude-original" ]]; then
     echo "$BIN_DIR/claude-original"
     return 0
   fi
-  # Otherwise find the current claude binary
   local claude_path
   claude_path=$(command -v claude 2>/dev/null) || true
   if [[ -n "$claude_path" ]]; then
@@ -1516,8 +1525,13 @@ is_force_active() {
   [[ -f "$BIN_DIR/claude-original" ]] && [[ -f "$DATA_DIR/force-mode" ]]
 }
 
+# Check if bypass was set by ccswitch
+is_bypass_active() {
+  [[ -f "$DATA_DIR/bypass-mode" ]]
+}
+
 cmd_default() {
-  local provider="" force_mode=false
+  local provider="" force_mode=false bypass_mode=false
   local default_file="$DATA_DIR/default-provider"
   local shell_rc="$HOME/.bashrc"
   [[ "${SHELL##*/}" == "zsh" ]] && shell_rc="$HOME/.zshrc"
@@ -1526,6 +1540,7 @@ cmd_default() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --force|-f) force_mode=true ;;
+      --bypass|-b) bypass_mode=true ;;
       *) provider="$1" ;;
     esac
     shift
@@ -1539,14 +1554,16 @@ cmd_default() {
     else
       echo -e "No default provider set ${DIM}(using native Anthropic)${NC}"
     fi
-    if is_force_active; then
-      echo -e "Mode: ${YELLOW}force${NC} (claude binary wrapped)"
-    fi
+    local mode_info=""
+    is_force_active && mode_info="force"
+    is_bypass_active && mode_info="${mode_info:+$mode_info + }bypass"
+    [[ -n "$mode_info" ]] && echo -e "Mode: ${YELLOW}$mode_info${NC}"
     echo
     echo -e "${BOLD}Usage:${NC}"
-    echo -e "  ${GREEN}ccswitch default <provider>${NC}         Shell hook (current session)"
-    echo -e "  ${GREEN}ccswitch default --force <provider>${NC}  Wrap claude binary (all contexts)"
-    echo -e "  ${GREEN}ccswitch default reset${NC}              Restore native claude"
+    echo -e "  ${GREEN}ccswitch default <provider>${NC}                  Shell hook only"
+    echo -e "  ${GREEN}ccswitch default --force <provider>${NC}           Wrap claude binary"
+    echo -e "  ${GREEN}ccswitch default --force --bypass <provider>${NC}  Wrap + auto-approve tools"
+    echo -e "  ${GREEN}ccswitch default reset${NC}                       Restore everything"
     echo
     echo -e "${BOLD}tmux per-pane override:${NC}"
     echo -e "  ${GREEN}export CCSWITCH_DEFAULT_PROVIDER=zai${NC}"
@@ -1577,6 +1594,92 @@ cmd_default() {
   else
     default_hook "$provider" "$def" "$shell_rc"
   fi
+
+  # Handle bypass permissions
+  if [[ "$bypass_mode" == true ]]; then
+    settings_set_bypass
+  fi
+}
+
+# CLAUDE SETTINGS MANAGEMENT
+
+# Set bypassPermissions in claude settings
+settings_set_bypass() {
+  local py_cmd
+  py_cmd=$(command -v python3 2>/dev/null || command -v python 2>/dev/null) || {
+    error "Python required for JSON manipulation (install python3)"
+    return 1
+  }
+
+  mkdir -p "$(dirname "$CLAUDE_SETTINGS")"
+
+  # Back up current settings if not already saved by ccswitch
+  if [[ -f "$CLAUDE_SETTINGS" ]] && [[ ! -f "$DATA_DIR/settings-backup.json" ]]; then
+    cp "$CLAUDE_SETTINGS" "$DATA_DIR/settings-backup.json"
+  fi
+
+  # Update settings using Python (safe JSON manipulation)
+  "$py_cmd" -c "
+import json, os, sys
+
+path = os.path.expanduser('$CLAUDE_SETTINGS')
+try:
+    with open(path, 'r') as f:
+        data = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    data = {}
+
+if 'permissions' not in data:
+    data['permissions'] = {}
+data['permissions']['defaultMode'] = 'bypassPermissions'
+
+with open(path, 'w') as f:
+    json.dump(data, f, indent=2)
+    f.write('\n')
+" || {
+    error "Failed to update claude settings"
+    return 1
+  }
+
+  echo "active" > "$DATA_DIR/bypass-mode"
+
+  echo
+  warn "bypassPermissions enabled in ${DIM}~/.claude/settings.json${NC}"
+  echo -e "  ${DIM}${SYM_ARROW}${NC} All tool calls auto-approved (deny list still enforced)"
+  echo -e "  ${DIM}${SYM_ARROW}${NC} Restore: ${GREEN}ccswitch default reset${NC}"
+}
+
+# Remove bypassPermissions from claude settings
+settings_remove_bypass() {
+  local py_cmd
+  py_cmd=$(command -v python3 2>/dev/null || command -v python 2>/dev/null) || return 1
+
+  if [[ -f "$DATA_DIR/settings-backup.json" ]]; then
+    # Restore from backup (safest)
+    cp "$DATA_DIR/settings-backup.json" "$CLAUDE_SETTINGS"
+    rm -f "$DATA_DIR/settings-backup.json"
+  elif [[ -f "$CLAUDE_SETTINGS" ]]; then
+    # Remove just the defaultMode key
+    "$py_cmd" -c "
+import json, os
+
+path = os.path.expanduser('$CLAUDE_SETTINGS')
+try:
+    with open(path, 'r') as f:
+        data = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    exit(0)
+
+if 'permissions' in data and 'defaultMode' in data['permissions']:
+    del data['permissions']['defaultMode']
+
+with open(path, 'w') as f:
+    json.dump(data, f, indent=2)
+    f.write('\n')
+" 2>/dev/null || true
+  fi
+
+  rm -f "$DATA_DIR/bypass-mode"
 }
 
 # FORCE MODE: Replace claude binary with wrapper
@@ -1625,7 +1728,7 @@ WRAPPER
   IFS='|' read -r _ _ _ _ description <<< "$def"
   success "Default set to ${BOLD}$provider${NC} (${description:-$provider}) ${YELLOW}[force]${NC}"
   echo
-  echo -e "  ${DIM}${SYM_ARROW}${NC} ${GREEN}claude${NC} binary wrapped → routes through ccswitch-$provider"
+  echo -e "  ${DIM}${SYM_ARROW}${NC} ${GREEN}claude${NC} binary wrapped -> routes through ccswitch-$provider"
   echo -e "  ${DIM}${SYM_ARROW}${NC} Works in ALL contexts (OMC, subprocesses, scripts)"
   echo -e "  ${DIM}${SYM_ARROW}${NC} Original backed up as ${DIM}claude-original${NC}"
   echo -e "  ${DIM}${SYM_ARROW}${NC} tmux override: ${GREEN}export CCSWITCH_DEFAULT_PROVIDER=zai${NC}"
@@ -1693,6 +1796,13 @@ default_reset() {
     success "Restored native claude ${DIM}(binary unwrapped)${NC}"
   else
     success "Restored native claude"
+  fi
+
+  # Restore bypass permissions
+  if is_bypass_active; then
+    log "Restoring claude permissions..."
+    settings_remove_bypass
+    success "Removed bypassPermissions"
   fi
 
   # Remove shell hook
