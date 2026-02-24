@@ -1,0 +1,15 @@
+{
+  "_version": 1,
+  "_updated": "2026-02-24",
+  "providers": {
+    "zai":        { "model": "glm-5",              "opts": "haiku=glm-5,sonnet=glm-5,opus=glm-5",                                 "v": "2026-02-24" },
+    "zai-cn":     { "model": "glm-5",              "opts": "haiku=glm-5,sonnet=glm-5,opus=glm-5",                                 "v": "2026-02-24" },
+    "minimax":    { "model": "MiniMax-M2.5",        "opts": "",                                                                     "v": "2026-02-24" },
+    "minimax-cn": { "model": "MiniMax-M2.5",        "opts": "",                                                                     "v": "2026-02-24" },
+    "kimi":       { "model": "kimi-k2.5",           "opts": "small=kimi-k2.5",                                                     "v": "2026-02-24" },
+    "moonshot":   { "model": "kimi-k2.5",           "opts": "",                                                                     "v": "2026-02-24" },
+    "ve":         { "model": "doubao-seed-code-preview-latest", "opts": "",                                                         "v": "2026-02-24" },
+    "deepseek":   { "model": "deepseek-chat",       "opts": "small=deepseek-chat",                                                 "v": "2026-02-24" },
+    "mimo":       { "model": "mimo-v2-flash",       "opts": "haiku=mimo-v2-flash,sonnet=mimo-v2-flash,opus=mimo-v2-flash",         "v": "2026-02-24" }
+  }
+}

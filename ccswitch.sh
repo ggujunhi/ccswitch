@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# CCSWITCH v1.2.0 - Multi-provider launcher for Claude CLI
+# CCSWITCH v1.3.0 - Multi-provider launcher for Claude CLI
 # =============================================================================
 # A CLI tool to manage and switch between different LLM providers
 # for the Claude Code command-line interface.
@@ -13,9 +13,10 @@ set -euo pipefail
 IFS=$'\n\t'
 umask 077
 
-readonly VERSION="1.2.1"
+readonly VERSION="1.3.0"
 readonly CCSWITCH_DOCS="https://github.com/ggujunhi/ccswitch"
 readonly CCSWITCH_RAW="https://raw.githubusercontent.com/ggujunhi/ccswitch/main/ccswitch.sh"
+readonly REGISTRY_URL="https://raw.githubusercontent.com/ggujunhi/ccswitch/main/models.json"
 readonly UPDATE_CHECK_INTERVAL=86400  # 24 hours
 
 # =============================================================================
@@ -527,6 +528,296 @@ is_provider_configured() {
 }
 
 # =============================================================================
+# MODEL REGISTRY
+# =============================================================================
+
+readonly PINS_FILE="$CONFIG_DIR/model-pins"
+readonly REGISTRY_FILE="$CACHE_DIR/models.json"
+
+fetch_model_registry() {
+  local force="${1:-}"
+  local stamp_file="$CACHE_DIR/last_model_check"
+  mkdir -p "$CACHE_DIR"
+
+  if [[ "$force" != "force" && -f "$stamp_file" ]]; then
+    local last_check; last_check=$(cat "$stamp_file" 2>/dev/null || echo 0)
+    local now; now=$(date +%s)
+    if (( now - last_check < UPDATE_CHECK_INTERVAL )); then
+      return 0
+    fi
+  fi
+
+  date +%s > "$stamp_file"
+
+  local tmp; tmp=$(mktemp "${TMPDIR:-/tmp}/ccswitch-registry.XXXXXX")
+  if curl -fsSL --max-time 5 "$REGISTRY_URL" -o "$tmp" 2>/dev/null; then
+    if grep -q '"_version"' "$tmp"; then
+      mv "$tmp" "$REGISTRY_FILE"
+    else
+      rm -f "$tmp"
+    fi
+  else
+    rm -f "$tmp"
+  fi
+}
+
+# Parse a field from the cached registry for a provider
+# Usage: registry_get <provider> <field>  (field: model, opts, v)
+registry_get() {
+  local provider="$1" field="$2"
+  [[ -f "$REGISTRY_FILE" ]] || return 1
+  local entry
+  entry=$(grep -o "\"${provider}\"[^}]*}" "$REGISTRY_FILE" 2>/dev/null) || return 1
+  local val
+  val=$(echo "$entry" | grep -o "\"${field}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | sed 's/.*:[[:space:]]*"//;s/"$//') || return 1
+  [[ -n "$val" ]] && echo "$val"
+}
+
+# Read a user-pinned model for a provider
+get_pinned_model() {
+  local provider="$1"
+  [[ -f "$PINS_FILE" ]] || return 1
+  local val
+  val=$(grep "^${provider}=" "$PINS_FILE" 2>/dev/null | head -1 | cut -d= -f2-) || return 1
+  [[ -n "$val" ]] && echo "$val"
+}
+
+# Resolve the effective model for a provider: pin > registry > hardcoded
+resolve_model() {
+  local provider="$1"
+  local pinned; pinned=$(get_pinned_model "$provider" 2>/dev/null) || true
+  if [[ -n "$pinned" ]]; then echo "$pinned"; return; fi
+  local reg; reg=$(registry_get "$provider" "model" 2>/dev/null) || true
+  if [[ -n "$reg" ]]; then echo "$reg"; return; fi
+  # Fallback: extract hardcoded model from get_provider_def
+  local def; def=$(get_provider_def "$provider")
+  [[ -n "$def" ]] && IFS='|' read -r _ _ model _ _ <<< "$def" && echo "$model"
+}
+
+resolve_model_opts() {
+  local provider="$1"
+  local reg; reg=$(registry_get "$provider" "opts" 2>/dev/null) || true
+  if [[ -n "$reg" ]]; then echo "$reg"; return; fi
+  local def; def=$(get_provider_def "$provider")
+  [[ -n "$def" ]] && IFS='|' read -r _ _ _ opts _ <<< "$def" && echo "$opts"
+}
+
+# Determine the source of the effective model
+model_source() {
+  local provider="$1"
+  local pinned; pinned=$(get_pinned_model "$provider" 2>/dev/null) || true
+  [[ -n "$pinned" ]] && echo "pinned" && return
+  local reg; reg=$(registry_get "$provider" "model" 2>/dev/null) || true
+  [[ -n "$reg" ]] && echo "registry" && return
+  echo "hardcoded"
+}
+
+check_model_updates() {
+  [[ "${CCSWITCH_NO_UPDATE:-}" == "1" ]] && return 0
+  [[ ! -t 1 ]] && return 0
+  fetch_model_registry
+
+  [[ -f "$REGISTRY_FILE" ]] || return 0
+
+  local providers=(zai zai-cn minimax minimax-cn kimi moonshot ve deepseek mimo)
+  local updates=()
+  for p in "${providers[@]}"; do
+    local launcher="$BIN_DIR/ccswitch-$p"
+    [[ -f "$launcher" ]] || continue
+    local current; current=$(grep '^export ANTHROPIC_MODEL=' "$launcher" 2>/dev/null | sed 's/.*="//;s/"$//' ) || continue
+    [[ -z "$current" ]] && continue
+    local latest; latest=$(resolve_model "$p") || continue
+    [[ -z "$latest" || "$current" == "$latest" ]] && continue
+    updates+=("$p: $current -> $latest")
+  done
+
+  if [[ ${#updates[@]} -gt 0 ]]; then
+    echo
+    warn "Model updates available:"
+    for u in "${updates[@]}"; do
+      echo -e "  ${CYAN}$u${NC}"
+    done
+    echo -e "  Run ${GREEN}ccswitch models apply${NC} to update launchers"
+    echo
+  fi
+}
+
+cmd_models() {
+  local action="${1:-}"
+  shift 2>/dev/null || true
+
+  case "$action" in
+    ""|list)  cmd_models_list ;;
+    update)   cmd_models_update ;;
+    apply)    cmd_models_apply ;;
+    diff)     cmd_models_diff ;;
+    pin)      cmd_models_pin "$@" ;;
+    unpin)    cmd_models_unpin "$@" ;;
+    *)        error "Unknown action: $action"; echo "Usage: ccswitch models [list|update|apply|diff|pin|unpin]" ;;
+  esac
+}
+
+cmd_models_list() {
+  fetch_model_registry
+
+  local reg_date=""
+  if [[ -f "$REGISTRY_FILE" ]]; then
+    reg_date=$(grep -o '"_updated"[^,}]*' "$REGISTRY_FILE" 2>/dev/null | sed 's/.*"//;s/"$//' ) || true
+  fi
+
+  echo
+  echo -e "${BOLD}Models${NC}${reg_date:+ ${DIM}(registry: $reg_date)${NC}}"
+  draw_separator 60
+  printf "  ${DIM}%-12s %-28s %s${NC}\n" "Provider" "Model" "Source"
+  draw_separator 60
+
+  local providers=(zai zai-cn minimax minimax-cn kimi moonshot ve deepseek mimo)
+  for p in "${providers[@]}"; do
+    local model; model=$(resolve_model "$p")
+    local src; src=$(model_source "$p")
+    local color="$NC"
+    case "$src" in
+      pinned)    color="$YELLOW" ;;
+      registry)  color="$GREEN" ;;
+      hardcoded) color="$DIM" ;;
+    esac
+    printf "  %-12s %-28s ${color}%s${NC}\n" "$p" "${model:-?}" "$src"
+  done
+
+  echo
+  local stamp_file="$CACHE_DIR/last_model_check"
+  if [[ -f "$stamp_file" ]]; then
+    local last; last=$(cat "$stamp_file" 2>/dev/null || echo 0)
+    local now; now=$(date +%s)
+    local ago=$(( now - last ))
+    if (( ago < 60 )); then
+      echo -e "  ${DIM}Last checked: just now${NC}"
+    elif (( ago < 3600 )); then
+      echo -e "  ${DIM}Last checked: $(( ago / 60 ))m ago${NC}"
+    else
+      echo -e "  ${DIM}Last checked: $(( ago / 3600 ))h ago${NC}"
+    fi
+  fi
+}
+
+cmd_models_update() {
+  log "Fetching latest model registry..."
+  fetch_model_registry "force"
+  if [[ -f "$REGISTRY_FILE" ]]; then
+    local reg_date
+    reg_date=$(grep -o '"_updated"[^,}]*' "$REGISTRY_FILE" 2>/dev/null | sed 's/.*"//;s/"$//' ) || true
+    success "Registry updated${reg_date:+ ($reg_date)}"
+    cmd_models_diff
+    echo
+    log "Run ${CYAN}ccswitch models apply${NC} to regenerate launchers with new models."
+  else
+    error "Failed to fetch registry"
+  fi
+}
+
+cmd_models_apply() {
+  fetch_model_registry
+
+  local providers=(zai zai-cn minimax minimax-cn kimi moonshot ve deepseek mimo)
+  local changed=0
+
+  for p in "${providers[@]}"; do
+    local def; def=$(get_provider_def "$p")
+    [[ -z "$def" ]] && continue
+    IFS='|' read -r keyvar baseurl _ _ _ <<< "$def"
+
+    local resolved_model; resolved_model=$(resolve_model "$p")
+    local resolved_opts; resolved_opts=$(resolve_model_opts "$p")
+    [[ -z "$resolved_model" ]] && continue
+
+    # Check current launcher model
+    local launcher="$BIN_DIR/ccswitch-$p"
+    if [[ -f "$launcher" ]]; then
+      local current; current=$(grep '^export ANTHROPIC_MODEL=' "$launcher" 2>/dev/null | sed 's/.*="//;s/"$//' ) || true
+      [[ "$current" == "$resolved_model" ]] && continue
+      log "Updating $p: ${DIM}$current${NC} -> ${GREEN}$resolved_model${NC}"
+    else
+      log "Generating $p: ${GREEN}$resolved_model${NC}"
+    fi
+
+    generate_launcher "$p" "$keyvar" "$baseurl" "$resolved_model" "$resolved_opts"
+    ((++changed)) || true
+  done
+
+  if [[ $changed -eq 0 ]]; then
+    success "All launchers up to date"
+  else
+    success "Regenerated $changed launcher(s)"
+  fi
+}
+
+cmd_models_diff() {
+  fetch_model_registry
+
+  echo
+  printf "  ${DIM}%-12s %-20s %-20s %-20s${NC}\n" "Provider" "Hardcoded" "Registry" "Pinned"
+  draw_separator 75
+
+  local providers=(zai zai-cn minimax minimax-cn kimi moonshot ve deepseek mimo)
+  for p in "${providers[@]}"; do
+    local def; def=$(get_provider_def "$p")
+    IFS='|' read -r _ _ hc_model _ _ <<< "$def"
+    local reg_model; reg_model=$(registry_get "$p" "model" 2>/dev/null) || reg_model="-"
+    local pin_model; pin_model=$(get_pinned_model "$p" 2>/dev/null) || pin_model="-"
+
+    local mark=""
+    if [[ "$reg_model" != "-" && "$reg_model" != "$hc_model" ]]; then
+      mark=" ${CYAN}NEW${NC}"
+    fi
+
+    printf "  %-12s %-20s %-20s %-20s%b\n" "$p" "${hc_model:-?}" "$reg_model" "$pin_model" "$mark"
+  done
+  echo
+}
+
+cmd_models_pin() {
+  local provider="${1:-}" model="${2:-}"
+  if [[ -z "$provider" || -z "$model" ]]; then
+    error "Usage: ccswitch models pin <provider> <model>"
+    echo -e "Example: ${GREEN}ccswitch models pin zai glm-4.7${NC}"
+    return 1
+  fi
+  # Validate provider exists
+  local def; def=$(get_provider_def "$provider")
+  if [[ -z "$def" ]]; then
+    error "Unknown provider: $provider"
+    return 1
+  fi
+  mkdir -p "$CONFIG_DIR"
+  # Remove existing pin
+  if [[ -f "$PINS_FILE" ]]; then
+    local tmp; tmp=$(mktemp "${PINS_FILE}.XXXXXX")
+    grep -v "^${provider}=" "$PINS_FILE" > "$tmp" 2>/dev/null || true
+    mv "$tmp" "$PINS_FILE"
+  fi
+  echo "${provider}=${model}" >> "$PINS_FILE"
+  success "Pinned $provider to ${CYAN}$model${NC}"
+  suggest_next "Apply to launcher: ${GREEN}ccswitch models apply${NC}"
+}
+
+cmd_models_unpin() {
+  local provider="${1:-}"
+  if [[ -z "$provider" ]]; then
+    error "Usage: ccswitch models unpin <provider>"
+    return 1
+  fi
+  if [[ ! -f "$PINS_FILE" ]]; then
+    warn "No pins configured"
+    return 0
+  fi
+  local tmp; tmp=$(mktemp "${PINS_FILE}.XXXXXX")
+  grep -v "^${provider}=" "$PINS_FILE" > "$tmp" 2>/dev/null || true
+  mv "$tmp" "$PINS_FILE"
+  success "Unpinned $provider (will use registry/default)"
+  suggest_next "Apply to launcher: ${GREEN}ccswitch models apply${NC}"
+}
+
+# =============================================================================
 # HELP SYSTEM
 # =============================================================================
 
@@ -543,6 +834,7 @@ ${BOLD}Usage:${NC} ccswitch [options] <command>
 ${BOLD}Commands:${NC}
   config       Configure a provider
   keys         Manage API keys (list/set/delete)
+  models       Manage provider models (list/update/pin)
   list         List profiles
   info <name>  Provider details
   test         Test providers
@@ -579,6 +871,12 @@ ${BOLD}COMMANDS${NC}
   keys                 List all API keys (masked)
   keys set <provider>  Set/update an API key
   keys delete <prov>   Delete an API key
+  models               Show current models per provider
+  models update        Fetch latest model registry
+  models apply         Regenerate launchers with latest models
+  models diff          Compare hardcoded vs registry vs pinned
+  models pin <p> <m>   Pin provider to a specific model
+  models unpin <p>     Remove pin, revert to latest
   list                 List all configured profiles
   info <provider>      Show details for a provider
   test [provider]      Test provider connectivity
@@ -1352,11 +1650,15 @@ do_install() {
   fi
   success "'claude' found"
 
-  # Back up secrets to temp file before cleaning (survives interruption)
-  local secrets_tmp=""
+  # Back up secrets and model pins before cleaning
+  local secrets_tmp="" pins_tmp=""
   if [[ -f "$SECRETS_FILE" ]]; then
     secrets_tmp=$(mktemp "${TMPDIR:-/tmp}/ccswitch-secrets.XXXXXX")
     cp -p "$SECRETS_FILE" "$secrets_tmp"
+  fi
+  if [[ -f "$PINS_FILE" ]]; then
+    pins_tmp=$(mktemp "${TMPDIR:-/tmp}/ccswitch-pins.XXXXXX")
+    cp -p "$PINS_FILE" "$pins_tmp"
   fi
   rm -f "$BIN_DIR/ccswitch" "$BIN_DIR"/ccswitch-* 2>/dev/null || true
   rm -rf "$CONFIG_DIR" "$DATA_DIR" "$CACHE_DIR" 2>/dev/null || true
@@ -1364,10 +1666,13 @@ do_install() {
   # Create directories (XDG compliant)
   mkdir -p "$CONFIG_DIR" "$DATA_DIR" "$CACHE_DIR" "$BIN_DIR"
 
-  # Restore secrets from temp backup
+  # Restore secrets and pins from backup
   if [[ -n "$secrets_tmp" && -f "$secrets_tmp" ]]; then
     mv "$secrets_tmp" "$SECRETS_FILE"
     chmod 600 "$SECRETS_FILE"
+  fi
+  if [[ -n "$pins_tmp" && -f "$pins_tmp" ]]; then
+    mv "$pins_tmp" "$PINS_FILE"
   fi
 
   # Save banner
@@ -1385,11 +1690,16 @@ exec claude "$@"
 EOF
   chmod +x "$BIN_DIR/ccswitch-native"
 
-  # Generate standard launchers
+  # Fetch model registry for latest models
+  fetch_model_registry
+
+  # Generate standard launchers (using registry models when available)
   local providers=(zai zai-cn minimax minimax-cn kimi moonshot ve deepseek mimo)
   for p in "${providers[@]}"; do
     local def; def=$(get_provider_def "$p")
-    IFS='|' read -r keyvar baseurl model model_opts _ <<< "$def"
+    IFS='|' read -r keyvar baseurl _ _ _ <<< "$def"
+    local model; model=$(resolve_model "$p")
+    local model_opts; model_opts=$(resolve_model_opts "$p")
     generate_launcher "$p" "$keyvar" "$baseurl" "$model" "$model_opts"
   done
 
@@ -1601,8 +1911,11 @@ main() {
   local cmd="${1:-}"
   shift || true
 
-  # Auto-update check (silent, non-blocking)
-  [[ "$cmd" != "update" && "$cmd" != "uninstall" ]] && check_update
+  # Auto-update and model check (silent, non-blocking)
+  if [[ "$cmd" != "update" && "$cmd" != "uninstall" && "$cmd" != "models" ]]; then
+    check_update
+    check_model_updates
+  fi
 
   case "$cmd" in
     "")         show_brief_help ;;
@@ -1611,6 +1924,7 @@ main() {
     info)       cmd_info "$@" ;;
     test)       cmd_test "$@" ;;
     keys)       cmd_keys "$@" ;;
+    models)     cmd_models "$@" ;;
     status)     cmd_status "$@" ;;
     uninstall)  cmd_uninstall "$@" ;;
     update)     cmd_update ;;
