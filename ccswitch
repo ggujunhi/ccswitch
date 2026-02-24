@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# =============================================================================
+# CCSWITCH - Multi-provider launcher for Claude CLI
+# Main entry point - sources modular components
+# =============================================================================
+
+set -euo pipefail
+IFS=$'\n\t'
+
+# =============================================================================
+# SCRIPT DIRECTORY
+# =============================================================================
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# =============================================================================
+# SOURCE LIBRARY FILES (in dependency order)
+# =============================================================================
+
+source "${SCRIPT_DIR}/lib/core.sh"
+source "${SCRIPT_DIR}/lib/utils.sh"
+source "${SCRIPT_DIR}/lib/validation.sh"
+source "${SCRIPT_DIR}/lib/secrets.sh"
+
+# =============================================================================
+# SOURCE COMMAND FILES
+# Set CCSWITCH_DIR so command files resolve paths correctly
+# =============================================================================
+
+export CCSWITCH_DIR="$SCRIPT_DIR"
+
+source "${SCRIPT_DIR}/commands/models.sh"
+source "${SCRIPT_DIR}/commands/config.sh"
+source "${SCRIPT_DIR}/commands/list.sh"
+source "${SCRIPT_DIR}/commands/default.sh"
+source "${SCRIPT_DIR}/commands/test.sh"
+source "${SCRIPT_DIR}/commands/install.sh"
+
+# =============================================================================
+# CLEANUP TRAP
+# =============================================================================
+
+trap 'cleanup' EXIT
+
+# =============================================================================
+# MAIN FUNCTION
+# =============================================================================
+
+main() {
+  parse_args "$@"
+  set -- ${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}
+
+  local cmd="${1:-}"
+  shift || true
+
+  # Auto-update and model check (silent, non-blocking)
+  if [[ "$cmd" != "update" && "$cmd" != "uninstall" && "$cmd" != "models" ]]; then
+    check_update
+    check_model_updates
+  fi
+
+  case "$cmd" in
+    "")         show_brief_help ;;
+    config)     cmd_config "$@" ;;
+    list)       cmd_list "$@" ;;
+    info)       cmd_info "$@" ;;
+    test)       cmd_test "$@" ;;
+    keys)       cmd_keys "$@" ;;
+    models)     cmd_models "$@" ;;
+    status)     cmd_status "$@" ;;
+    default)    cmd_default "$@" ;;
+    uninstall)  cmd_uninstall "$@" ;;
+    update)     cmd_update ;;
+    help)       [[ -n "${1:-}" ]] && show_command_help "$1" || show_full_help ;;
+    install)    do_install ;;
+    *)
+      error "Unknown command: $cmd"
+      local suggestion; suggestion=$(suggest_command "$cmd")
+      [[ -n "$suggestion" ]] && echo -e "Did you mean: ${GREEN}ccswitch $suggestion${NC}?"
+      exit 1
+      ;;
+  esac
+}
+
+# =============================================================================
+# ENTRY POINT
+# =============================================================================
+
+# If sourced, don't run main
+if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] || [[ ! -f "${BASH_SOURCE[0]:-}" ]]; then
+  # Piped execution (curl | bash) or first run -> install
+  if [[ ! -f "${BASH_SOURCE[0]:-}" ]] || [[ ! -f "$BIN_DIR/ccswitch" ]]; then
+    do_install
+  elif [[ -z "${1:-}" ]]; then
+    # Direct execution with no args from source -> reinstall
+    do_install
+  else
+    main "$@"
+  fi
+fi

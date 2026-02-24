@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
 # =============================================================================
-# CCSWITCH v1.4.0 - Multi-provider launcher for Claude CLI
+# CCSWITCH - Multi-provider launcher for Claude CLI
+# Single-file distribution (built from modular source)
 # =============================================================================
-# A CLI tool to manage and switch between different LLM providers
-# for the Claude Code command-line interface.
-#
 # Repository: https://github.com/ggujunhi/ccswitch
 # License: MIT
 # =============================================================================
+
+# =============================================================================
+# CORE
+# =============================================================================
+
+# CCSWITCH Core Library - Constants and Global Variables
+#
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -19,9 +24,7 @@ readonly CCSWITCH_RAW="https://raw.githubusercontent.com/ggujunhi/ccswitch/main/
 readonly REGISTRY_URL="https://raw.githubusercontent.com/ggujunhi/ccswitch/main/models.json"
 readonly UPDATE_CHECK_INTERVAL=86400  # 24 hours
 
-# =============================================================================
 # XDG BASE DIRECTORY SPECIFICATION
-# =============================================================================
 
 readonly XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 readonly XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
@@ -63,9 +66,7 @@ fi
 readonly CONFIG_FILE="$CONFIG_DIR/config"
 readonly SECRETS_FILE="$DATA_DIR/secrets.env"
 
-# =============================================================================
 # GLOBAL FLAGS (can be set via env vars)
-# =============================================================================
 
 VERBOSE="${CCSWITCH_VERBOSE:-0}"
 DEBUG="${CCSWITCH_DEBUG:-0}"
@@ -76,9 +77,17 @@ NO_BANNER="${CCSWITCH_NO_BANNER:-0}"
 OUTPUT_FORMAT="${CCSWITCH_OUTPUT_FORMAT:-human}"  # human, json, plain
 DEFAULT_PROVIDER="${CCSWITCH_DEFAULT_PROVIDER:-}"
 
+
 # =============================================================================
+# UTILS
+# =============================================================================
+
+# CCSWITCH Utils Library - Logging, Colors, and Prompts
+#
+#           NO_COLOR, YES_MODE, NO_INPUT)
+#
+
 # TTY & COLOR DETECTION
-# =============================================================================
 
 is_tty() { [[ -t 1 ]]; }
 is_stdin_tty() { [[ -t 0 ]]; }
@@ -114,12 +123,7 @@ setup_symbols() {
   fi
 }
 
-setup_colors
-setup_symbols
-
-# =============================================================================
 # LOGGING SYSTEM
-# =============================================================================
 
 debug()   { [[ "$DEBUG" == "1" ]] && echo -e "${DIM}[DEBUG] $*${NC}" >&2 || true; }
 verbose() { [[ "$VERBOSE" == "1" || "$DEBUG" == "1" ]] && echo -e "${DIM}$*${NC}" >&2 || true; }
@@ -146,9 +150,7 @@ suggest_next() {
   for s in "$@"; do echo -e "  ${CYAN}${SYM_ARROW}${NC} $s"; done
 }
 
-# =============================================================================
 # UI COMPONENTS
-# =============================================================================
 
 draw_box() {
   local title="$1" width="${2:-52}"
@@ -171,37 +173,39 @@ draw_separator() {
   printf "${DIM}%s${NC}\n" "$hline"
 }
 
-# Spinner for long operations
-SPINNER_PID=""
 spinner_start() {
   local msg="${1:-Working...}"
-  ! is_tty && { log "$msg"; return; }
+  _SPINNER_MSG="$msg"
+  _SPINNER_PID=""
+  if ! is_tty; then
+    echo -e "${BLUE}${SYM_INFO}${NC} $msg"
+    return
+  fi
   (
     local i=0
     while true; do
-      printf "\r${BLUE}${SYM_SPINNER[$i]}${NC} %s " "$msg"
-      i=$(( (i + 1) % ${#SYM_SPINNER[@]} ))
+      printf "\r${BLUE}%s${NC} %s " "${SYM_SPINNER[$((i % ${#SYM_SPINNER[@]}))]}" "$msg"
+      ((i++))
       sleep 0.1
     done
   ) &
-  SPINNER_PID=$!
-  disown "$SPINNER_PID" 2>/dev/null || true
+  _SPINNER_PID=$!
+  disown "$_SPINNER_PID" 2>/dev/null || true
 }
 
 spinner_stop() {
-  local status="${1:-0}" msg="${2:-Done}"
-  if [[ -n "$SPINNER_PID" ]]; then
-    kill "$SPINNER_PID" 2>/dev/null || true
-    wait "$SPINNER_PID" 2>/dev/null || true
-    SPINNER_PID=""
-    printf "\r\033[K"
+  local exit_code="${1:-0}" msg="${2:-}"
+  if [[ -n "${_SPINNER_PID:-}" ]]; then
+    kill "$_SPINNER_PID" 2>/dev/null || true
+    wait "$_SPINNER_PID" 2>/dev/null || true
+    printf "\r\033[K"  # Clear line
   fi
-  [[ "$status" -eq 0 ]] && success "$msg" || error "$msg"
+  if [[ -n "$msg" ]]; then
+    if [[ "$exit_code" -eq 0 ]]; then success "$msg"; else error "$msg"; fi
+  fi
 }
 
-# =============================================================================
 # INPUT & PROMPTS
-# =============================================================================
 
 prompt() {
   local msg="$1" default="${2:-}" var="${3:-REPLY}"
@@ -235,9 +239,20 @@ confirm_danger() {
   [[ "$resp" == "$phrase" ]]
 }
 
+# AUTO-INITIALIZE
+
+setup_colors
+setup_symbols
+
 # =============================================================================
 # VALIDATION
 # =============================================================================
+
+# CCSWITCH Validation Library - Input Validation Functions
+#
+#
+
+# VALIDATION FUNCTIONS
 
 validate_name() {
   local name="$1" field="${2:-name}"
@@ -297,8 +312,16 @@ validate_safe_value() {
 }
 
 # =============================================================================
-# SECRETS MANAGEMENT
+# SECRETS
 # =============================================================================
+
+# CCSWITCH Secrets Library - Secrets Management Functions
+#
+#           lib/validation.sh (for validation functions)
+#           lib/core.sh (for SECRETS_FILE constant)
+#
+
+# SECRETS MANAGEMENT
 
 load_secrets() {
   [[ ! -f "$SECRETS_FILE" ]] && return 0
@@ -466,79 +489,19 @@ cmd_keys() {
 }
 
 # =============================================================================
-# MIGRATION FROM CLOTHER
+# PROVIDER DEFINITIONS & MODELS
 # =============================================================================
 
-migrate_from_clother() {
-  local old_data="${XDG_DATA_HOME}/clother"
-  local old_config="${XDG_CONFIG_HOME}/clother"
-  local old_cache="${XDG_CACHE_HOME}/clother"
+# CCSWITCH Commands - Model Management
+#
+#           lib/utils.sh (for logging, colors, prompts)
+#           lib/validation.sh (for validation functions)
+#           lib/secrets.sh (for secret management)
+#
 
-  # Check if old clother data exists and new data doesn't
-  if [[ -d "$old_data" ]] && [[ ! -f "$SECRETS_FILE" ]]; then
-    log "Detected existing Clother installation, migrating..."
-
-    # Migrate data directory
-    mkdir -p "$DATA_DIR"
-    if [[ -f "$old_data/secrets.env" ]]; then
-      # Validate format before migration
-      local _mig_valid=true
-      while IFS= read -r _mig_line || [[ -n "$_mig_line" ]]; do
-        [[ -z "$_mig_line" || "$_mig_line" =~ ^[[:space:]]*# ]] && continue
-        if [[ ! "$_mig_line" =~ ^[A-Z_][A-Z0-9_]*= ]]; then
-          warn "Clother secrets file has unexpected format; migration skipped"
-          _mig_valid=false
-          break
-        fi
-      done < "$old_data/secrets.env"
-      if [[ "$_mig_valid" == "true" ]]; then
-        sed 's/^CLOTHER_/CCSWITCH_/' "$old_data/secrets.env" > "$SECRETS_FILE"
-        chmod 600 "$SECRETS_FILE"
-        success "Migrated secrets from Clother"
-      fi
-    fi
-    if [[ -f "$old_data/banner" ]]; then
-      cp "$old_data/banner" "$DATA_DIR/banner" 2>/dev/null || true
-    fi
-
-    # Migrate config directory
-    if [[ -d "$old_config" ]]; then
-      mkdir -p "$CONFIG_DIR"
-      cp -r "$old_config"/* "$CONFIG_DIR"/ 2>/dev/null || true
-      success "Migrated config from Clother"
-    fi
-
-    log "Migration complete. Old Clother files preserved at:"
-    log "  $old_data"
-    log "  $old_config"
-    log "Run 'ccswitch uninstall' on old installation separately if desired."
-  fi
-}
-
-# =============================================================================
-# SIGNAL HANDLERS & CLEANUP
-# =============================================================================
-
-cleanup() {
-  local exit_code="${1:-$?}"
-  # Kill spinner if still running
-  if [[ -n "${SPINNER_PID:-}" ]]; then
-    kill "$SPINNER_PID" 2>/dev/null || true
-    wait "$SPINNER_PID" 2>/dev/null || true
-    SPINNER_PID=""
-    printf "\r\033[K" 2>/dev/null || true
-  fi
-  tput cnorm 2>/dev/null || true  # Show cursor
-  exit "$exit_code"
-}
-
-trap 'cleanup $?' EXIT
-trap 'cleanup 130' INT
-trap 'cleanup 143' TERM
-
-# =============================================================================
+# Source lib files
+# Get the parent of commands/ (i.e., src/)
 # PROVIDER DEFINITIONS
-# =============================================================================
 
 get_provider_def() {
   # Format: keyvar|baseurl|model|model_opts|description
@@ -571,9 +534,7 @@ is_provider_configured() {
   [[ -n "${!keyvar:-}" ]]
 }
 
-# =============================================================================
 # MODEL REGISTRY
-# =============================================================================
 
 readonly PINS_FILE="$CONFIG_DIR/model-pins"
 readonly REGISTRY_FILE="$CACHE_DIR/models.json"
@@ -691,6 +652,8 @@ check_model_updates() {
     echo
   fi
 }
+
+# MODEL COMMANDS
 
 cmd_models() {
   local action="${1:-}"
@@ -870,8 +833,21 @@ cmd_models_unpin() {
 }
 
 # =============================================================================
-# HELP SYSTEM
+# CONFIG COMMAND
 # =============================================================================
+
+# CCSWITCH Commands - Configuration Management
+#
+#           lib/utils.sh (for logging, colors, prompts, confirm)
+#           lib/validation.sh (for validation functions)
+#           lib/secrets.sh (for secret management, save_secret, load_secrets)
+#           commands/models.sh (for get_provider_def, is_provider_configured)
+#
+
+# Source lib files
+# Get the parent of commands/ (i.e., src/)
+
+# HELP SYSTEM
 
 show_version() {
   echo "CCSwitch v$VERSION"
@@ -890,7 +866,6 @@ ${BOLD}Commands:${NC}
   list         List profiles
   info <name>  Provider details
   test         Test providers
-  default      Set/show default provider for 'claude' command
   update       Check for updates
   help         Show full help
 
@@ -933,8 +908,6 @@ ${BOLD}COMMANDS${NC}
   list                 List all configured profiles
   info <provider>      Show details for a provider
   test [provider]      Test provider connectivity
-  default [provider]   Set default provider for 'claude' command
-  default reset        Restore native claude
   status               Show current CCSwitch state
   update               Check for and install updates
   uninstall            Remove CCSwitch completely
@@ -1048,7 +1021,7 @@ EOF
 # Command suggestion (prefix/substring match)
 suggest_command() {
   local input="$1"
-  local -a commands=(config list info test default status uninstall help)
+  local -a commands=(config list info test status uninstall help)
   local best="" best_score=0
 
   for cmd in "${commands[@]}"; do
@@ -1072,9 +1045,7 @@ suggest_command() {
   [[ -n "$best" ]] && echo "$best"
 }
 
-# =============================================================================
 # COMMANDS
-# =============================================================================
 
 cmd_config() {
   local provider="${1:-}"
@@ -1366,6 +1337,23 @@ config_local_provider() {
   [[ -n "$model" ]] && echo -e "${DIM}Default model: $model${NC}"
 }
 
+# =============================================================================
+# LIST / INFO / STATUS COMMANDS
+# =============================================================================
+
+# CCSWITCH Commands - List/Info/Status Commands
+#
+#           lib/utils.sh (for logging, colors, prompts, confirm)
+#           lib/validation.sh (for validation functions)
+#           lib/secrets.sh (for secret management, save_secret, load_secrets)
+#           commands/models.sh (for get_provider_def, is_provider_configured)
+#
+
+# Source lib files
+# Get the parent of commands/ (i.e., src/)
+
+# PROVIDER LISTING COMMANDS
+
 cmd_list() {
   load_secrets
 
@@ -1444,6 +1432,144 @@ cmd_info() {
     echo -e "Type:        Custom/Unknown"
   fi
 }
+
+cmd_status() {
+  load_secrets
+
+  echo
+  draw_box "CCSWITCH STATUS" 50
+  echo
+  echo -e "  Version:     ${BOLD}$VERSION${NC}"
+  echo -e "  Config:      $CONFIG_DIR"
+  echo -e "  Data:        $DATA_DIR"
+  echo -e "  Bin:         $BIN_DIR"
+  echo
+
+  local count=0
+  for f in "$BIN_DIR"/ccswitch-*; do [[ -x "$f" ]] && ((++count)) || true; done
+  echo -e "  Profiles:    ${BOLD}$count${NC} installed"
+
+  if [[ -n "$DEFAULT_PROVIDER" ]]; then
+    echo -e "  Default:     ${YELLOW}$DEFAULT_PROVIDER${NC}"
+  fi
+}
+
+# =============================================================================
+# DEFAULT PROVIDER COMMAND
+# =============================================================================
+
+# CCSWITCH Commands - Default Provider Management
+# that the 'claude' command will use via a shell function hook.
+#
+#
+
+# Source lib files
+
+# DEFAULT PROVIDER COMMAND
+
+cmd_default() {
+  local provider="${1:-}"
+  local default_file="$DATA_DIR/default-provider"
+  local shell_rc="$HOME/.bashrc"
+  [[ "${SHELL##*/}" == "zsh" ]] && shell_rc="$HOME/.zshrc"
+
+  # Show current default
+  if [[ -z "$provider" ]]; then
+    if [[ -f "$default_file" ]]; then
+      local cur; cur=$(cat "$default_file")
+      echo -e "Default provider: ${GREEN}$cur${NC}"
+    else
+      echo -e "No default provider set ${DIM}(using native Anthropic)${NC}"
+    fi
+    echo
+    echo -e "${BOLD}Usage:${NC}"
+    echo -e "  ${GREEN}ccswitch default <provider>${NC}  Set default for 'claude'"
+    echo -e "  ${GREEN}ccswitch default reset${NC}      Restore native claude"
+    echo
+    echo -e "${BOLD}tmux per-pane override:${NC}"
+    echo -e "  ${GREEN}export CCSWITCH_DEFAULT_PROVIDER=zai${NC}"
+    return 0
+  fi
+
+  # Reset
+  if [[ "$provider" == "reset" || "$provider" == "none" || "$provider" == "native" ]]; then
+    rm -f "$default_file"
+    # Remove shell hook
+    if [[ -f "$shell_rc" ]]; then
+      sed -i '/# CCSwitch default provider hook/d; /ccswitch-shell-hook/d' "$shell_rc" 2>/dev/null || true
+    fi
+    success "Restored native claude"
+    warn "Restart your shell or run: ${GREEN}unset -f claude 2>/dev/null; hash -r${NC}"
+    return 0
+  fi
+
+  # Validate provider
+  local def; def=$(get_provider_def "$provider" 2>/dev/null) || true
+  if [[ -z "$def" ]]; then
+    if [[ ! -x "$BIN_DIR/ccswitch-$provider" ]]; then
+      error "Unknown provider: $provider"
+      echo -e "Available: native, zai, zai-cn, minimax, minimax-cn, kimi, moonshot, ve, deepseek, mimo"
+      return 1
+    fi
+  fi
+
+  # Save default provider
+  echo "$provider" > "$default_file"
+
+  # Generate shell hook script
+  cat > "$DATA_DIR/ccswitch-shell-hook.sh" << 'HOOKEOF'
+# CCSwitch: override 'claude' to use configured default provider
+claude() {
+  local _ccs_data="${XDG_DATA_HOME:-$HOME/.local/share}/ccswitch"
+  local _ccs_bin="${HOME}/.local/bin"
+  [[ "$(uname)" == "Darwin" ]] && _ccs_bin="${HOME}/bin"
+  local _provider="${CCSWITCH_DEFAULT_PROVIDER:-}"
+  if [[ -z "$_provider" && -f "$_ccs_data/default-provider" ]]; then
+    _provider=$(cat "$_ccs_data/default-provider")
+  fi
+  if [[ -n "$_provider" && "$_provider" != "native" && -x "$_ccs_bin/ccswitch-$_provider" ]]; then
+    "$_ccs_bin/ccswitch-$_provider" "$@"
+  else
+    command claude "$@"
+  fi
+}
+HOOKEOF
+
+  # Add to shell rc if not already present
+  if ! grep -q 'ccswitch-shell-hook' "$shell_rc" 2>/dev/null; then
+    echo >> "$shell_rc"
+    echo '# CCSwitch default provider hook' >> "$shell_rc"
+    echo "source \"${DATA_DIR}/ccswitch-shell-hook.sh\"" >> "$shell_rc"
+  fi
+
+  # Source it now for current session
+
+  IFS='|' read -r _ _ _ _ description <<< "$def"
+  success "Default set to ${BOLD}$provider${NC} (${description:-$provider})"
+  echo
+  echo -e "  ${DIM}${SYM_ARROW}${NC} ${GREEN}claude${NC} now uses $provider"
+  echo -e "  ${DIM}${SYM_ARROW}${NC} tmux override: ${GREEN}export CCSWITCH_DEFAULT_PROVIDER=zai${NC}"
+  echo -e "  ${DIM}${SYM_ARROW}${NC} Restore: ${GREEN}ccswitch default reset${NC}"
+  echo
+  warn "Restart your shell or run: ${GREEN}source $shell_rc${NC}"
+}
+
+# =============================================================================
+# TEST COMMAND
+# =============================================================================
+
+# CCSWITCH Commands - Test Provider
+#
+#           lib/utils.sh (for logging, colors, prompts, confirm)
+#           lib/validation.sh (for validation functions)
+#           lib/secrets.sh (for secret management, save_secret, load_secrets)
+#           commands/models.sh (for get_provider_def, is_provider_configured, resolve_model)
+#
+
+# Source lib files
+# Get the parent of commands/ (i.e., src/)
+
+# PROVIDER TEST COMMAND
 
 cmd_test() {
   local provider="${1:-}"
@@ -1555,114 +1681,86 @@ cmd_test() {
   echo -e "Results: ${GREEN}$ok reachable${NC}, ${RED}$fail failed${NC}$([[ $skip -gt 0 ]] && echo ", ${DIM}$skip skipped${NC}")"
 }
 
-cmd_status() {
-  load_secrets
+# =============================================================================
+# INSTALL / UPDATE / UNINSTALL
+# =============================================================================
 
-  echo
-  draw_box "CCSWITCH STATUS" 50
-  echo
-  echo -e "  Version:     ${BOLD}$VERSION${NC}"
-  echo -e "  Config:      $CONFIG_DIR"
-  echo -e "  Data:        $DATA_DIR"
-  echo -e "  Bin:         $BIN_DIR"
-  echo
+# CCSWITCH Commands - Install/Uninstall/Update Commands
+#
+#           lib/utils.sh (for logging, colors, prompts, confirm, spinner functions)
+#           lib/validation.sh (for validation functions, validate_safe_value)
+#           lib/secrets.sh (for secret management, SECRETS_FILE, load_secrets)
+#           commands/models.sh (for get_provider_def, resolve_model, resolve_model_opts,
+#                              fetch_model_registry, is_provider_configured)
+#
 
-  local count=0
-  for f in "$BIN_DIR"/ccswitch-*; do [[ -x "$f" ]] && ((++count)) || true; done
-  echo -e "  Profiles:    ${BOLD}$count${NC} installed"
+# Source lib files
+# Get the parent of commands/ (i.e., src/)
 
-  if [[ -n "$DEFAULT_PROVIDER" ]]; then
-    echo -e "  Default:     ${YELLOW}$DEFAULT_PROVIDER${NC}"
+# MIGRATION FROM CLOTHER
+
+migrate_from_clother() {
+  local old_data="${XDG_DATA_HOME}/clother"
+  local old_config="${XDG_CONFIG_HOME}/clother"
+  local old_cache="${XDG_CACHE_HOME}/clother"
+
+  # Check if old clother data exists and new data doesn't
+  if [[ -d "$old_data" ]] && [[ ! -f "$SECRETS_FILE" ]]; then
+    log "Detected existing Clother installation, migrating..."
+
+    # Migrate data directory
+    mkdir -p "$DATA_DIR"
+    if [[ -f "$old_data/secrets.env" ]]; then
+      # Validate format before migration
+      local _mig_valid=true
+      while IFS= read -r _mig_line || [[ -n "$_mig_line" ]]; do
+        [[ -z "$_mig_line" || "$_mig_line" =~ ^[[:space:]]*# ]] && continue
+        if [[ ! "$_mig_line" =~ ^[A-Z_][A-Z0-9_]*= ]]; then
+          warn "Clother secrets file has unexpected format; migration skipped"
+          _mig_valid=false
+          break
+        fi
+      done < "$old_data/secrets.env"
+      if [[ "$_mig_valid" == "true" ]]; then
+        sed 's/^CLOTHER_/CCSWITCH_/' "$old_data/secrets.env" > "$SECRETS_FILE"
+        chmod 600 "$SECRETS_FILE"
+        success "Migrated secrets from Clother"
+      fi
+    fi
+    if [[ -f "$old_data/banner" ]]; then
+      cp "$old_data/banner" "$DATA_DIR/banner" 2>/dev/null || true
+    fi
+
+    # Migrate config directory
+    if [[ -d "$old_config" ]]; then
+      mkdir -p "$CONFIG_DIR"
+      cp -r "$old_config"/* "$CONFIG_DIR"/ 2>/dev/null || true
+      success "Migrated config from Clother"
+    fi
+
+    log "Migration complete. Old Clother files preserved at:"
+    log "  $old_data"
+    log "  $old_config"
+    log "Run 'ccswitch uninstall' on old installation separately if desired."
   fi
 }
 
-cmd_default() {
-  local provider="${1:-}"
-  local default_file="$DATA_DIR/default-provider"
-  local shell_rc="$HOME/.bashrc"
-  [[ "${SHELL##*/}" == "zsh" ]] && shell_rc="$HOME/.zshrc"
+# CLEANUP FUNCTION
 
-  # Show current default
-  if [[ -z "$provider" ]]; then
-    if [[ -f "$default_file" ]]; then
-      local cur; cur=$(cat "$default_file")
-      echo -e "Default provider: ${GREEN}$cur${NC}"
-    else
-      echo -e "No default provider set ${DIM}(using native Anthropic)${NC}"
-    fi
-    echo
-    echo -e "${BOLD}Usage:${NC}"
-    echo -e "  ${GREEN}ccswitch default <provider>${NC}  Set default for 'claude'"
-    echo -e "  ${GREEN}ccswitch default reset${NC}      Restore native claude"
-    echo
-    echo -e "${BOLD}tmux per-pane override:${NC}"
-    echo -e "  ${GREEN}export CCSWITCH_DEFAULT_PROVIDER=zai${NC}"
-    return 0
+cleanup() {
+  local exit_code="${1:-$?}"
+  # Kill spinner if still running
+  if [[ -n "${SPINNER_PID:-}" ]]; then
+    kill "$SPINNER_PID" 2>/dev/null || true
+    wait "$SPINNER_PID" 2>/dev/null || true
+    SPINNER_PID=""
+    printf "\r\033[K" 2>/dev/null || true
   fi
-
-  # Reset
-  if [[ "$provider" == "reset" || "$provider" == "none" || "$provider" == "native" ]]; then
-    rm -f "$default_file"
-    # Remove shell hook
-    if [[ -f "$shell_rc" ]]; then
-      sed -i '/# CCSwitch default provider hook/d; /ccswitch-shell-hook/d' "$shell_rc" 2>/dev/null || true
-    fi
-    success "Restored native claude"
-    warn "Restart your shell or run: ${GREEN}unset -f claude 2>/dev/null; hash -r${NC}"
-    return 0
-  fi
-
-  # Validate provider
-  local def; def=$(get_provider_def "$provider" 2>/dev/null) || true
-  if [[ -z "$def" ]]; then
-    if [[ ! -x "$BIN_DIR/ccswitch-$provider" ]]; then
-      error "Unknown provider: $provider"
-      echo -e "Available: native, zai, zai-cn, minimax, minimax-cn, kimi, moonshot, ve, deepseek, mimo"
-      return 1
-    fi
-  fi
-
-  # Save default provider
-  echo "$provider" > "$default_file"
-
-  # Generate shell hook script
-  cat > "$DATA_DIR/ccswitch-shell-hook.sh" << 'HOOKEOF'
-# CCSwitch: override 'claude' to use configured default provider
-claude() {
-  local _ccs_data="${XDG_DATA_HOME:-$HOME/.local/share}/ccswitch"
-  local _ccs_bin="${HOME}/.local/bin"
-  [[ "$(uname)" == "Darwin" ]] && _ccs_bin="${HOME}/bin"
-  local _provider="${CCSWITCH_DEFAULT_PROVIDER:-}"
-  if [[ -z "$_provider" && -f "$_ccs_data/default-provider" ]]; then
-    _provider=$(cat "$_ccs_data/default-provider")
-  fi
-  if [[ -n "$_provider" && "$_provider" != "native" && -x "$_ccs_bin/ccswitch-$_provider" ]]; then
-    "$_ccs_bin/ccswitch-$_provider" "$@"
-  else
-    command claude "$@"
-  fi
+  tput cnorm 2>/dev/null || true  # Show cursor
+  exit "$exit_code"
 }
-HOOKEOF
 
-  # Add to shell rc if not already present
-  if ! grep -q 'ccswitch-shell-hook' "$shell_rc" 2>/dev/null; then
-    echo >> "$shell_rc"
-    echo '# CCSwitch default provider hook' >> "$shell_rc"
-    echo "source \"${DATA_DIR}/ccswitch-shell-hook.sh\"" >> "$shell_rc"
-  fi
-
-  # Source it now for current session
-  source "$DATA_DIR/ccswitch-shell-hook.sh"
-
-  IFS='|' read -r _ _ _ _ description <<< "$def"
-  success "Default set to ${BOLD}$provider${NC} (${description:-$provider})"
-  echo
-  echo -e "  ${DIM}${SYM_ARROW}${NC} ${GREEN}claude${NC} now uses $provider"
-  echo -e "  ${DIM}${SYM_ARROW}${NC} tmux override: ${GREEN}export CCSWITCH_DEFAULT_PROVIDER=zai${NC}"
-  echo -e "  ${DIM}${SYM_ARROW}${NC} Restore: ${GREEN}ccswitch default reset${NC}"
-  echo
-  warn "Restart your shell or run: ${GREEN}source $shell_rc${NC}"
-}
+# UNINSTALL COMMAND
 
 cmd_uninstall() {
   echo
@@ -1676,21 +1774,12 @@ cmd_uninstall() {
 
   confirm_danger "Remove all CCSwitch files" "delete ccswitch" || return 1
 
-  # Remove shell hook if present
-  local shell_rc="$HOME/.bashrc"
-  [[ "${SHELL##*/}" == "zsh" ]] && shell_rc="$HOME/.zshrc"
-  if [[ -f "$shell_rc" ]]; then
-    sed -i '/# CCSwitch default provider hook/d; /ccswitch-shell-hook/d' "$shell_rc" 2>/dev/null || true
-  fi
-
   spinner_start "Removing files..."
   rm -rf "$CONFIG_DIR" "$DATA_DIR" "$CACHE_DIR" "$BIN_DIR"/ccswitch-* "$BIN_DIR/ccswitch" 2>/dev/null || true
   spinner_stop 0 "CCSwitch uninstalled"
 }
 
-# =============================================================================
 # LAUNCHER GENERATORS
-# =============================================================================
 
 generate_launcher() {
   local name="$1" keyvar="$2" baseurl="$3" model="$4" model_opts="$5"
@@ -1698,7 +1787,6 @@ generate_launcher() {
   mkdir -p "$BIN_DIR"
 
   cat > "$BIN_DIR/ccswitch-$name" << 'LAUNCHER'
-#!/usr/bin/env bash
 set -euo pipefail
 [[ "${CCSWITCH_NO_BANNER:-}" != "1" && -t 1 ]] && cat "${XDG_DATA_HOME:-$HOME/.local/share}/ccswitch/banner" 2>/dev/null && echo
 SECRETS="${XDG_DATA_HOME:-$HOME/.local/share}/ccswitch/secrets.env"
@@ -1764,7 +1852,6 @@ generate_or_launcher() {
   validate_safe_value "$model" "model name" || return 1
 
   cat > "$BIN_DIR/ccswitch-or-$name" << 'LAUNCHER'
-#!/usr/bin/env bash
 set -euo pipefail
 [[ "${CCSWITCH_NO_BANNER:-}" != "1" && -t 1 ]] && cat "${XDG_DATA_HOME:-$HOME/.local/share}/ccswitch/banner" 2>/dev/null && echo
 SECRETS="${XDG_DATA_HOME:-$HOME/.local/share}/ccswitch/secrets.env"
@@ -1810,7 +1897,6 @@ generate_local_launcher() {
   mkdir -p "$BIN_DIR"
 
   cat > "$BIN_DIR/ccswitch-$name" << 'LAUNCHER'
-#!/usr/bin/env bash
 set -euo pipefail
 [[ "${CCSWITCH_NO_BANNER:-}" != "1" && -t 1 ]] && cat "${XDG_DATA_HOME:-$HOME/.local/share}/ccswitch/banner" 2>/dev/null && echo
 LAUNCHER
@@ -1847,11 +1933,7 @@ LAUNCHER
   echo 'exec claude "$@"' >> "$BIN_DIR/ccswitch-$name"
   chmod +x "$BIN_DIR/ccswitch-$name"
 }
-
-
-# =============================================================================
 # INSTALLATION
-# =============================================================================
 
 do_install() {
   # Auto-bump patch version in source file on each install
@@ -1896,6 +1978,7 @@ do_install() {
     pins_tmp=$(mktemp "$(dirname "$PINS_FILE")/pins-backup.XXXXXX")
     cp -p "$PINS_FILE" "$pins_tmp"
   fi
+
   rm -f "$BIN_DIR/ccswitch" "$BIN_DIR"/ccswitch-* 2>/dev/null || true
   rm -rf "$CONFIG_DIR" "$DATA_DIR" "$CACHE_DIR" 2>/dev/null || true
 
@@ -1921,7 +2004,6 @@ do_install() {
 
   # Generate native launcher
   cat > "$BIN_DIR/ccswitch-native" << 'EOF'
-#!/usr/bin/env bash
 set -euo pipefail
 [[ "${CCSWITCH_NO_BANNER:-}" != "1" && -t 1 ]] && cat "${XDG_DATA_HOME:-$HOME/.local/share}/ccswitch/banner" 2>/dev/null && echo "    + native" && echo
 exec claude "$@"
@@ -1972,7 +2054,6 @@ EOF
 
 generate_main_command() {
   cat > "$BIN_DIR/ccswitch" << 'MAINEOF'
-#!/usr/bin/env bash
 set -euo pipefail
 IFS=$'\n\t'
 umask 077
@@ -2008,9 +2089,7 @@ MAINEOF
   chmod +x "$DATA_DIR/ccswitch-full.sh"
 }
 
-# =============================================================================
 # BANNER
-# =============================================================================
 
 read -r -d '' BANNER << 'EOF' || true
    ____ ____ ____          _ _       _
@@ -2020,9 +2099,7 @@ read -r -d '' BANNER << 'EOF' || true
   \____\____|____/ \_/\_/ |_|\__\___|_| |_|
 EOF
 
-# =============================================================================
 # ARGUMENT PARSING
-# =============================================================================
 
 parse_args() {
   REMAINING_ARGS=()
@@ -2048,9 +2125,7 @@ parse_args() {
   done
 }
 
-# =============================================================================
 # AUTO-UPDATE
-# =============================================================================
 
 check_update() {
   # Skip if explicitly disabled or non-interactive
@@ -2201,11 +2276,9 @@ main() {
 
 # If sourced, don't run main
 if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] || [[ ! -f "${BASH_SOURCE[0]:-}" ]]; then
-  # Piped execution (curl | bash) or first run -> install
   if [[ ! -f "${BASH_SOURCE[0]:-}" ]] || [[ ! -f "$BIN_DIR/ccswitch" ]]; then
     do_install
   elif [[ -z "${1:-}" ]]; then
-    # Direct execution with no args from source -> reinstall
     do_install
   else
     main "$@"
