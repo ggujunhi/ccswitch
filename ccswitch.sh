@@ -13,7 +13,7 @@ set -euo pipefail
 IFS=$'\n\t'
 umask 077
 
-readonly VERSION="1.4.2"
+readonly VERSION="1.4.3"
 readonly CCSWITCH_DOCS="https://github.com/ggujunhi/ccswitch"
 readonly CCSWITCH_RAW="https://raw.githubusercontent.com/ggujunhi/ccswitch/main/ccswitch.sh"
 readonly REGISTRY_URL="https://raw.githubusercontent.com/ggujunhi/ccswitch/main/models.json"
@@ -890,6 +890,7 @@ ${BOLD}Commands:${NC}
   list         List profiles
   info <name>  Provider details
   test         Test providers
+  default      Set/show default provider for 'claude' command
   update       Check for updates
   help         Show full help
 
@@ -932,6 +933,8 @@ ${BOLD}COMMANDS${NC}
   list                 List all configured profiles
   info <provider>      Show details for a provider
   test [provider]      Test provider connectivity
+  default [provider]   Set default provider for 'claude' command
+  default reset        Restore native claude
   status               Show current CCSwitch state
   update               Check for and install updates
   uninstall            Remove CCSwitch completely
@@ -1045,7 +1048,7 @@ EOF
 # Command suggestion (prefix/substring match)
 suggest_command() {
   local input="$1"
-  local -a commands=(config list info test status uninstall help)
+  local -a commands=(config list info test default status uninstall help)
   local best="" best_score=0
 
   for cmd in "${commands[@]}"; do
@@ -1573,6 +1576,94 @@ cmd_status() {
   fi
 }
 
+cmd_default() {
+  local provider="${1:-}"
+  local default_file="$DATA_DIR/default-provider"
+  local shell_rc="$HOME/.bashrc"
+  [[ "${SHELL##*/}" == "zsh" ]] && shell_rc="$HOME/.zshrc"
+
+  # Show current default
+  if [[ -z "$provider" ]]; then
+    if [[ -f "$default_file" ]]; then
+      local cur; cur=$(cat "$default_file")
+      echo -e "Default provider: ${GREEN}$cur${NC}"
+    else
+      echo -e "No default provider set ${DIM}(using native Anthropic)${NC}"
+    fi
+    echo
+    echo -e "${BOLD}Usage:${NC}"
+    echo -e "  ${GREEN}ccswitch default <provider>${NC}  Set default for 'claude'"
+    echo -e "  ${GREEN}ccswitch default reset${NC}      Restore native claude"
+    echo
+    echo -e "${BOLD}tmux per-pane override:${NC}"
+    echo -e "  ${GREEN}export CCSWITCH_DEFAULT_PROVIDER=zai${NC}"
+    return 0
+  fi
+
+  # Reset
+  if [[ "$provider" == "reset" || "$provider" == "none" || "$provider" == "native" ]]; then
+    rm -f "$default_file"
+    # Remove shell hook
+    if [[ -f "$shell_rc" ]]; then
+      sed -i '/# CCSwitch default provider hook/d; /ccswitch-shell-hook/d' "$shell_rc" 2>/dev/null || true
+    fi
+    success "Restored native claude"
+    warn "Restart your shell or run: ${GREEN}unset -f claude 2>/dev/null; hash -r${NC}"
+    return 0
+  fi
+
+  # Validate provider
+  local def; def=$(get_provider_def "$provider" 2>/dev/null) || true
+  if [[ -z "$def" ]]; then
+    if [[ ! -x "$BIN_DIR/ccswitch-$provider" ]]; then
+      error "Unknown provider: $provider"
+      echo -e "Available: native, zai, zai-cn, minimax, minimax-cn, kimi, moonshot, ve, deepseek, mimo"
+      return 1
+    fi
+  fi
+
+  # Save default provider
+  echo "$provider" > "$default_file"
+
+  # Generate shell hook script
+  cat > "$DATA_DIR/ccswitch-shell-hook.sh" << 'HOOKEOF'
+# CCSwitch: override 'claude' to use configured default provider
+claude() {
+  local _ccs_data="${XDG_DATA_HOME:-$HOME/.local/share}/ccswitch"
+  local _ccs_bin="${HOME}/.local/bin"
+  [[ "$(uname)" == "Darwin" ]] && _ccs_bin="${HOME}/bin"
+  local _provider="${CCSWITCH_DEFAULT_PROVIDER:-}"
+  if [[ -z "$_provider" && -f "$_ccs_data/default-provider" ]]; then
+    _provider=$(cat "$_ccs_data/default-provider")
+  fi
+  if [[ -n "$_provider" && "$_provider" != "native" && -x "$_ccs_bin/ccswitch-$_provider" ]]; then
+    "$_ccs_bin/ccswitch-$_provider" "$@"
+  else
+    command claude "$@"
+  fi
+}
+HOOKEOF
+
+  # Add to shell rc if not already present
+  if ! grep -q 'ccswitch-shell-hook' "$shell_rc" 2>/dev/null; then
+    echo >> "$shell_rc"
+    echo '# CCSwitch default provider hook' >> "$shell_rc"
+    echo "source \"${DATA_DIR}/ccswitch-shell-hook.sh\"" >> "$shell_rc"
+  fi
+
+  # Source it now for current session
+  source "$DATA_DIR/ccswitch-shell-hook.sh"
+
+  IFS='|' read -r _ _ _ _ description <<< "$def"
+  success "Default set to ${BOLD}$provider${NC} (${description:-$provider})"
+  echo
+  echo -e "  ${DIM}${SYM_ARROW}${NC} ${GREEN}claude${NC} now uses $provider"
+  echo -e "  ${DIM}${SYM_ARROW}${NC} tmux override: ${GREEN}export CCSWITCH_DEFAULT_PROVIDER=zai${NC}"
+  echo -e "  ${DIM}${SYM_ARROW}${NC} Restore: ${GREEN}ccswitch default reset${NC}"
+  echo
+  warn "Restart your shell or run: ${GREEN}source $shell_rc${NC}"
+}
+
 cmd_uninstall() {
   echo
   echo -e "${BOLD}Uninstall CCSwitch${NC}"
@@ -1584,6 +1675,13 @@ cmd_uninstall() {
   echo
 
   confirm_danger "Remove all CCSwitch files" "delete ccswitch" || return 1
+
+  # Remove shell hook if present
+  local shell_rc="$HOME/.bashrc"
+  [[ "${SHELL##*/}" == "zsh" ]] && shell_rc="$HOME/.zshrc"
+  if [[ -f "$shell_rc" ]]; then
+    sed -i '/# CCSwitch default provider hook/d; /ccswitch-shell-hook/d' "$shell_rc" 2>/dev/null || true
+  fi
 
   spinner_start "Removing files..."
   rm -rf "$CONFIG_DIR" "$DATA_DIR" "$CACHE_DIR" "$BIN_DIR"/ccswitch-* "$BIN_DIR/ccswitch" 2>/dev/null || true
@@ -2087,6 +2185,7 @@ main() {
     keys)       cmd_keys "$@" ;;
     models)     cmd_models "$@" ;;
     status)     cmd_status "$@" ;;
+    default)    cmd_default "$@" ;;
     uninstall)  cmd_uninstall "$@" ;;
     update)     cmd_update ;;
     help)       [[ -n "${1:-}" ]] && show_command_help "$1" || show_full_help ;;
