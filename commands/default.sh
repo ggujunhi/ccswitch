@@ -279,9 +279,16 @@ default_force() {
   printf '%s\n' '#!/usr/bin/env bash' > "$BIN_DIR/claude"
   cat >> "$BIN_DIR/claude" << WRAPPER
 set -euo pipefail
-_CCS_DATA="\${XDG_DATA_HOME:-\$HOME/.local/share}/ccswitch"
 _CCS_BIN="\${HOME}/.local/bin"
 [[ "\$(uname)" == "Darwin" ]] && _CCS_BIN="\${HOME}/bin"
+
+# Prevent infinite recursion: launcher calls claude -> wrapper -> launcher -> ...
+if [[ "\${_CCSWITCH_ROUTED:-}" == "1" ]]; then
+  exec "\$_CCS_BIN/$fallback_bin" "\$@"
+fi
+export _CCSWITCH_ROUTED=1
+
+_CCS_DATA="\${XDG_DATA_HOME:-\$HOME/.local/share}/ccswitch"
 
 # Determine provider: env var > file > native
 _PROVIDER="\${CCSWITCH_DEFAULT_PROVIDER:-}"

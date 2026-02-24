@@ -179,7 +179,7 @@ check_model_updates() {
   for p in "${providers[@]}"; do
     local launcher="$BIN_DIR/ccswitch-$p"
     [[ -f "$launcher" ]] || continue
-    local current; current=$(grep '^export ANTHROPIC_MODEL=' "$launcher" 2>/dev/null | sed 's/.*="//;s/"$//' ) || continue
+    local current; current=$(grep '^export ANTHROPIC_MODEL=' "$launcher" 2>/dev/null | sed 's/^export ANTHROPIC_MODEL=//;s/^"//;s/"$//' ) || continue
     [[ -z "$current" ]] && continue
     local latest; latest=$(resolve_model "$p") || continue
     [[ -z "$latest" || "$current" == "$latest" ]] && continue
