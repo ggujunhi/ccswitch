@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# CCSWITCH v1.3.0 - Multi-provider launcher for Claude CLI
+# CCSWITCH v1.4.0 - Multi-provider launcher for Claude CLI
 # =============================================================================
 # A CLI tool to manage and switch between different LLM providers
 # for the Claude Code command-line interface.
@@ -13,7 +13,7 @@ set -euo pipefail
 IFS=$'\n\t'
 umask 077
 
-readonly VERSION="1.3.0"
+readonly VERSION="1.4.0"
 readonly CCSWITCH_DOCS="https://github.com/ggujunhi/ccswitch"
 readonly CCSWITCH_RAW="https://raw.githubusercontent.com/ggujunhi/ccswitch/main/ccswitch.sh"
 readonly REGISTRY_URL="https://raw.githubusercontent.com/ggujunhi/ccswitch/main/models.json"
@@ -227,7 +227,7 @@ confirm() {
 
 confirm_danger() {
   local action="$1" phrase="${2:-yes}"
-  [[ "$YES_MODE" == "1" ]] && { warn "Auto-confirming: $action"; return 0; }
+  # Never auto-confirm destructive operations (intentionally ignores YES_MODE)
   echo; draw_box "DANGER" 40; echo
   echo -e "${RED}${BOLD}$action${NC}"; echo
   echo -e "Type ${YELLOW}${BOLD}$phrase${NC} to confirm:"
@@ -257,6 +257,18 @@ validate_url() {
       "Provide a valid URL"
     return 1
   fi
+  # Warn on non-localhost http://
+  if [[ "$url" =~ ^http:// ]] && [[ ! "$url" =~ ^http://(localhost|127\.) ]]; then
+    warn "Insecure URL: API keys will be sent in cleartext over http://"
+    confirm "Continue with insecure URL?" || return 1
+  fi
+  # Reject shell metacharacters in URL
+  if [[ ! "$url" =~ ^[a-zA-Z0-9_./:@?%=\&+~-]+$ ]]; then
+    error_ctx "E002" "Invalid URL" "Validating: $url" \
+      "URL contains unsafe characters" \
+      "Provide a URL without shell metacharacters"
+    return 1
+  fi
 }
 
 validate_api_key() {
@@ -271,6 +283,15 @@ validate_api_key() {
     error_ctx "E004" "API key too short" "Validating key for $provider" \
       "Key has ${#key} chars, minimum is 8" \
       "Check that you copied the full key"
+    return 1
+  fi
+}
+
+# Validate that a value is safe to embed in shell scripts
+validate_safe_value() {
+  local val="$1" context="${2:-value}"
+  if [[ ! "$val" =~ ^[a-zA-Z0-9_./:+=-]+$ ]]; then
+    error "Unsafe $context rejected: contains shell metacharacters"
     return 1
   fi
 }
@@ -290,28 +311,39 @@ load_secrets() {
   if [[ "$perms" != "600" ]]; then
     warn "Fixing secrets file permissions"; chmod 600 "$SECRETS_FILE"
   fi
-  # Validate file format before sourcing
+  # Parse and assign each variable explicitly (never source)
   local line_num=0
   while IFS= read -r line || [[ -n "$line" ]]; do
     ((++line_num))
-    # Skip empty lines and comments
     [[ -z "$line" ]] && continue
     [[ "$line" =~ ^[[:space:]]*# ]] && continue
-    # Validate format: VAR_NAME=value (VAR_NAME must start with letter or underscore, contain only uppercase letters, numbers, and underscores)
     if [[ ! "$line" =~ ^[A-Z_][A-Z0-9_]*= ]]; then
       error "Invalid line in secrets file at line $line_num: malformed variable assignment"
-      error "Expected format: VAR_NAME=value (uppercase letters, numbers, underscores only)"
       return 1
     fi
+    local key="${line%%=*}"
+    local value="${line#*=}"
+    # Remove surrounding quotes if present (handles printf %q output)
+    if [[ "$value" =~ ^\$\'(.*)\'$ ]]; then
+      value="${BASH_REMATCH[1]}"
+    elif [[ "$value" =~ ^\'(.*)\'$ ]]; then
+      value="${BASH_REMATCH[1]}"
+    elif [[ "$value" =~ ^\"(.*)\"$ ]]; then
+      value="${BASH_REMATCH[1]}"
+    fi
+    printf -v "$key" '%s' "$value"
+    export "$key"
   done < "$SECRETS_FILE"
-  source "$SECRETS_FILE"
 }
 
 save_secret() {
   local key="$1" value="$2"
   mkdir -p "$(dirname "$SECRETS_FILE")"
   local tmp; tmp=$(mktemp "${SECRETS_FILE}.XXXXXX")
-  [[ -f "$SECRETS_FILE" ]] && grep -v "^${key}=" "$SECRETS_FILE" > "$tmp" 2>/dev/null || true
+  if [[ -f "$SECRETS_FILE" ]]; then
+    local escaped_key; escaped_key=$(printf '%s' "$key" | sed 's/[.[\*^$]/\\&/g')
+    grep -v "^${escaped_key}=" "$SECRETS_FILE" > "$tmp" 2>/dev/null || true
+  fi
   printf '%s=%q\n' "$key" "$value" >> "$tmp"
   mv "$tmp" "$SECRETS_FILE"
   chmod 600 "$SECRETS_FILE"
@@ -328,7 +360,8 @@ delete_secret() {
   local key="$1"
   [[ ! -f "$SECRETS_FILE" ]] && return 0
   local tmp; tmp=$(mktemp "${SECRETS_FILE}.XXXXXX")
-  grep -v "^${key}=" "$SECRETS_FILE" > "$tmp" 2>/dev/null || true
+  local escaped_key; escaped_key=$(printf '%s' "$key" | sed 's/[.[\*^$]/\\&/g')
+  grep -v "^${escaped_key}=" "$SECRETS_FILE" > "$tmp" 2>/dev/null || true
   mv "$tmp" "$SECRETS_FILE"
   chmod 600 "$SECRETS_FILE"
 }
@@ -448,10 +481,21 @@ migrate_from_clother() {
     # Migrate data directory
     mkdir -p "$DATA_DIR"
     if [[ -f "$old_data/secrets.env" ]]; then
-      # Copy and rename CLOTHER_* keys to CCSWITCH_*
-      sed 's/^CLOTHER_/CCSWITCH_/' "$old_data/secrets.env" > "$SECRETS_FILE"
-      chmod 600 "$SECRETS_FILE"
-      success "Migrated secrets from Clother"
+      # Validate format before migration
+      local _mig_valid=true
+      while IFS= read -r _mig_line || [[ -n "$_mig_line" ]]; do
+        [[ -z "$_mig_line" || "$_mig_line" =~ ^[[:space:]]*# ]] && continue
+        if [[ ! "$_mig_line" =~ ^[A-Z_][A-Z0-9_]*= ]]; then
+          warn "Clother secrets file has unexpected format; migration skipped"
+          _mig_valid=false
+          break
+        fi
+      done < "$old_data/secrets.env"
+      if [[ "$_mig_valid" == "true" ]]; then
+        sed 's/^CLOTHER_/CCSWITCH_/' "$old_data/secrets.env" > "$SECRETS_FILE"
+        chmod 600 "$SECRETS_FILE"
+        success "Migrated secrets from Clother"
+      fi
     fi
     if [[ -f "$old_data/banner" ]]; then
       cp "$old_data/banner" "$DATA_DIR/banner" 2>/dev/null || true
@@ -549,7 +593,7 @@ fetch_model_registry() {
 
   date +%s > "$stamp_file"
 
-  local tmp; tmp=$(mktemp "${TMPDIR:-/tmp}/ccswitch-registry.XXXXXX")
+  local tmp; tmp=$(mktemp "$CACHE_DIR/ccswitch-registry.XXXXXX")
   if curl -fsSL --max-time 5 "$REGISTRY_URL" -o "$tmp" 2>/dev/null; then
     if grep -q '"_version"' "$tmp"; then
       mv "$tmp" "$REGISTRY_FILE"
@@ -570,6 +614,11 @@ registry_get() {
   entry=$(grep -o "\"${provider}\"[^}]*}" "$REGISTRY_FILE" 2>/dev/null) || return 1
   local val
   val=$(echo "$entry" | grep -o "\"${field}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | sed 's/.*:[[:space:]]*"//;s/"$//') || return 1
+  # Validate extracted value against safe character whitelist
+  if [[ -n "$val" && ! "$val" =~ ^[a-zA-Z0-9_./:+=-]+$ ]]; then
+    warn "Registry value for $provider.$field contains unsafe characters, ignoring"
+    return 1
+  fi
   [[ -n "$val" ]] && echo "$val"
 }
 
@@ -578,7 +627,8 @@ get_pinned_model() {
   local provider="$1"
   [[ -f "$PINS_FILE" ]] || return 1
   local val
-  val=$(grep "^${provider}=" "$PINS_FILE" 2>/dev/null | head -1 | cut -d= -f2-) || return 1
+  local escaped_p; escaped_p=$(printf '%s' "$provider" | sed 's/[.[\*^$]/\\&/g')
+  val=$(grep "^${escaped_p}=" "$PINS_FILE" 2>/dev/null | head -1 | cut -d= -f2-) || return 1
   [[ -n "$val" ]] && echo "$val"
 }
 
@@ -792,7 +842,8 @@ cmd_models_pin() {
   # Remove existing pin
   if [[ -f "$PINS_FILE" ]]; then
     local tmp; tmp=$(mktemp "${PINS_FILE}.XXXXXX")
-    grep -v "^${provider}=" "$PINS_FILE" > "$tmp" 2>/dev/null || true
+    local escaped_p; escaped_p=$(printf '%s' "$provider" | sed 's/[.[\*^$]/\\&/g')
+    grep -v "^${escaped_p}=" "$PINS_FILE" > "$tmp" 2>/dev/null || true
     mv "$tmp" "$PINS_FILE"
   fi
   echo "${provider}=${model}" >> "$PINS_FILE"
@@ -811,7 +862,8 @@ cmd_models_unpin() {
     return 0
   fi
   local tmp; tmp=$(mktemp "${PINS_FILE}.XXXXXX")
-  grep -v "^${provider}=" "$PINS_FILE" > "$tmp" 2>/dev/null || true
+  local escaped_p; escaped_p=$(printf '%s' "$provider" | sed 's/[.[\*^$]/\\&/g')
+  grep -v "^${escaped_p}=" "$PINS_FILE" > "$tmp" 2>/dev/null || true
   mv "$tmp" "$PINS_FILE"
   success "Unpinned $provider (will use registry/default)"
   suggest_next "Apply to launcher: ${GREEN}ccswitch models apply${NC}"
@@ -1453,6 +1505,12 @@ cmd_test() {
     else
       # HTTP failed or curl crashed -- fall back to TCP connect
       local host; host=$(echo "$test_url" | sed 's|https\?://\([^/:]*\).*|\1|')
+      # Validate hostname before TCP attempt
+      if [[ ! "$host" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+        echo -e "${RED}${SYM_ERR} invalid hostname${NC}"
+        ((++fail)) || true
+        continue
+      fi
       local port=443
       [[ "$test_url" =~ http:// ]] && port=80
       if timeout 3 bash -c "echo >/dev/tcp/\$1/\$2" _ "$host" "$port" 2>/dev/null; then
@@ -1516,16 +1574,30 @@ generate_launcher() {
 
   mkdir -p "$BIN_DIR"
 
-  cat > "$BIN_DIR/ccswitch-$name" << LAUNCHER
+  cat > "$BIN_DIR/ccswitch-$name" << 'LAUNCHER'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "\${CCSWITCH_NO_BANNER:-}" != "1" && -t 1 ]] && cat "\${XDG_DATA_HOME:-\$HOME/.local/share}/ccswitch/banner" 2>/dev/null && echo "    + $name" && echo
-SECRETS="\${XDG_DATA_HOME:-\$HOME/.local/share}/ccswitch/secrets.env"
-if [[ -f "\$SECRETS" ]]; then
-  [[ -L "\$SECRETS" ]] && { echo "Error: secrets file is a symlink - refusing for security" >&2; exit 1; }
-  source "\$SECRETS"
+[[ "${CCSWITCH_NO_BANNER:-}" != "1" && -t 1 ]] && cat "${XDG_DATA_HOME:-$HOME/.local/share}/ccswitch/banner" 2>/dev/null && echo
+SECRETS="${XDG_DATA_HOME:-$HOME/.local/share}/ccswitch/secrets.env"
+if [[ -f "$SECRETS" ]]; then
+  [[ -L "$SECRETS" ]] && { echo "Error: secrets file is a symlink - refusing for security" >&2; exit 1; }
+  local_perms=$(stat -c "%a" "$SECRETS" 2>/dev/null || stat -f "%Lp" "$SECRETS" 2>/dev/null || echo "000")
+  [[ "$local_perms" != "600" ]] && { echo "Error: secrets file has unsafe permissions ($local_perms)" >&2; exit 1; }
+  while IFS= read -r _line || [[ -n "$_line" ]]; do
+    [[ -z "$_line" || "$_line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$_line" =~ ^[A-Z_][A-Z0-9_]*= ]] || { echo "Error: malformed secrets file" >&2; exit 1; }
+    _key="${_line%%=*}"; _val="${_line#*=}"
+    [[ "$_val" =~ ^\$\'(.*)\'$ ]] && _val="${BASH_REMATCH[1]}"
+    [[ "$_val" =~ ^\'(.*)\'$ ]] && _val="${BASH_REMATCH[1]}"
+    [[ "$_val" =~ ^\"(.*)\"$ ]] && _val="${BASH_REMATCH[1]}"
+    printf -v "$_key" '%s' "$_val"
+    export "$_key"
+  done < "$SECRETS"
 fi
 LAUNCHER
+
+  # Append provider name display
+  echo "echo \"    + $name\" && echo" >> "$BIN_DIR/ccswitch-$name"
 
   if [[ -n "$keyvar" ]]; then
     cat >> "$BIN_DIR/ccswitch-$name" << LAUNCHER
@@ -1534,19 +1606,26 @@ export ANTHROPIC_AUTH_TOKEN="\$$keyvar"
 LAUNCHER
   fi
 
-  [[ -n "$baseurl" ]] && echo "export ANTHROPIC_BASE_URL=\"$baseurl\"" >> "$BIN_DIR/ccswitch-$name"
-  [[ -n "$model" ]] && echo "export ANTHROPIC_MODEL=\"$model\"" >> "$BIN_DIR/ccswitch-$name"
+  if [[ -n "$baseurl" ]]; then
+    validate_safe_value "$baseurl" "base URL" || return 1
+    printf 'export ANTHROPIC_BASE_URL=%q\n' "$baseurl" >> "$BIN_DIR/ccswitch-$name"
+  fi
+  if [[ -n "$model" ]]; then
+    validate_safe_value "$model" "model name" || return 1
+    printf 'export ANTHROPIC_MODEL=%q\n' "$model" >> "$BIN_DIR/ccswitch-$name"
+  fi
 
   # Parse model_opts
   if [[ -n "$model_opts" ]]; then
     IFS=',' read -ra opts <<< "$model_opts"
     for opt in "${opts[@]}"; do
       IFS='=' read -r key val <<< "$opt"
+      validate_safe_value "$val" "model option" || continue
       case "$key" in
-        haiku)  echo "export ANTHROPIC_DEFAULT_HAIKU_MODEL=\"$val\"" >> "$BIN_DIR/ccswitch-$name" ;;
-        sonnet) echo "export ANTHROPIC_DEFAULT_SONNET_MODEL=\"$val\"" >> "$BIN_DIR/ccswitch-$name" ;;
-        opus)   echo "export ANTHROPIC_DEFAULT_OPUS_MODEL=\"$val\"" >> "$BIN_DIR/ccswitch-$name" ;;
-        small)  echo "export ANTHROPIC_SMALL_FAST_MODEL=\"$val\"" >> "$BIN_DIR/ccswitch-$name" ;;
+        haiku)  printf 'export ANTHROPIC_DEFAULT_HAIKU_MODEL=%q\n' "$val" >> "$BIN_DIR/ccswitch-$name" ;;
+        sonnet) printf 'export ANTHROPIC_DEFAULT_SONNET_MODEL=%q\n' "$val" >> "$BIN_DIR/ccswitch-$name" ;;
+        opus)   printf 'export ANTHROPIC_DEFAULT_OPUS_MODEL=%q\n' "$val" >> "$BIN_DIR/ccswitch-$name" ;;
+        small)  printf 'export ANTHROPIC_SMALL_FAST_MODEL=%q\n' "$val" >> "$BIN_DIR/ccswitch-$name" ;;
       esac
     done
   fi
@@ -1559,33 +1638,46 @@ generate_or_launcher() {
   local name="$1" model="$2"
 
   mkdir -p "$BIN_DIR"
+  validate_safe_value "$model" "model name" || return 1
 
-  # OpenRouter now supports native Anthropic API format
-  # No proxy needed - direct connection to https://openrouter.ai/api
-  cat > "$BIN_DIR/ccswitch-or-$name" << LAUNCHER
+  cat > "$BIN_DIR/ccswitch-or-$name" << 'LAUNCHER'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "\${CCSWITCH_NO_BANNER:-}" != "1" && -t 1 ]] && cat "\${XDG_DATA_HOME:-\$HOME/.local/share}/ccswitch/banner" 2>/dev/null && echo "    + OpenRouter: $name" && echo
-SECRETS="\${XDG_DATA_HOME:-\$HOME/.local/share}/ccswitch/secrets.env"
-if [[ -f "\$SECRETS" ]]; then
-  [[ -L "\$SECRETS" ]] && { echo "Error: secrets file is a symlink - refusing for security" >&2; exit 1; }
-  source "\$SECRETS"
+[[ "${CCSWITCH_NO_BANNER:-}" != "1" && -t 1 ]] && cat "${XDG_DATA_HOME:-$HOME/.local/share}/ccswitch/banner" 2>/dev/null && echo
+SECRETS="${XDG_DATA_HOME:-$HOME/.local/share}/ccswitch/secrets.env"
+if [[ -f "$SECRETS" ]]; then
+  [[ -L "$SECRETS" ]] && { echo "Error: secrets file is a symlink - refusing for security" >&2; exit 1; }
+  local_perms=$(stat -c "%a" "$SECRETS" 2>/dev/null || stat -f "%Lp" "$SECRETS" 2>/dev/null || echo "000")
+  [[ "$local_perms" != "600" ]] && { echo "Error: secrets file has unsafe permissions ($local_perms)" >&2; exit 1; }
+  while IFS= read -r _line || [[ -n "$_line" ]]; do
+    [[ -z "$_line" || "$_line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$_line" =~ ^[A-Z_][A-Z0-9_]*= ]] || { echo "Error: malformed secrets file" >&2; exit 1; }
+    _key="${_line%%=*}"; _val="${_line#*=}"
+    [[ "$_val" =~ ^\$\'(.*)\'$ ]] && _val="${BASH_REMATCH[1]}"
+    [[ "$_val" =~ ^\'(.*)\'$ ]] && _val="${BASH_REMATCH[1]}"
+    [[ "$_val" =~ ^\"(.*)\"$ ]] && _val="${BASH_REMATCH[1]}"
+    printf -v "$_key" '%s' "$_val"
+    export "$_key"
+  done < "$SECRETS"
 fi
-[[ -z "\${OPENROUTER_API_KEY:-}" ]] && { echo "Error: OPENROUTER_API_KEY not set. Run 'ccswitch config openrouter'" >&2; exit 1; }
+[[ -z "${OPENROUTER_API_KEY:-}" ]] && { echo "Error: OPENROUTER_API_KEY not set. Run 'ccswitch config openrouter'" >&2; exit 1; }
 
 # OpenRouter native Anthropic API support
 export ANTHROPIC_BASE_URL="https://openrouter.ai/api"
-export ANTHROPIC_AUTH_TOKEN="\$OPENROUTER_API_KEY"
+export ANTHROPIC_AUTH_TOKEN="$OPENROUTER_API_KEY"
 export ANTHROPIC_API_KEY=""  # Must be explicitly empty
-
-# Override all model tiers to use the selected model
-export ANTHROPIC_DEFAULT_OPUS_MODEL="$model"
-export ANTHROPIC_DEFAULT_SONNET_MODEL="$model"
-export ANTHROPIC_DEFAULT_HAIKU_MODEL="$model"
-export ANTHROPIC_SMALL_FAST_MODEL="$model"
-
-exec claude "\$@"
 LAUNCHER
+
+  # Append model exports and name display using printf %q
+  {
+    echo "echo \"    + OpenRouter: $name\" && echo"
+    printf 'export ANTHROPIC_DEFAULT_OPUS_MODEL=%q\n' "$model"
+    printf 'export ANTHROPIC_DEFAULT_SONNET_MODEL=%q\n' "$model"
+    printf 'export ANTHROPIC_DEFAULT_HAIKU_MODEL=%q\n' "$model"
+    printf 'export ANTHROPIC_SMALL_FAST_MODEL=%q\n' "$model"
+    echo 'exec claude "$@"'
+  } >> "$BIN_DIR/ccswitch-or-$name"
+
   chmod +x "$BIN_DIR/ccswitch-or-$name"
 }
 
@@ -1594,32 +1686,37 @@ generate_local_launcher() {
 
   mkdir -p "$BIN_DIR"
 
-  cat > "$BIN_DIR/ccswitch-$name" << LAUNCHER
+  cat > "$BIN_DIR/ccswitch-$name" << 'LAUNCHER'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "\${CCSWITCH_NO_BANNER:-}" != "1" && -t 1 ]] && cat "\${XDG_DATA_HOME:-\$HOME/.local/share}/ccswitch/banner" 2>/dev/null && echo "    + $name (local)" && echo
-export ANTHROPIC_BASE_URL="$baseurl"
+[[ "${CCSWITCH_NO_BANNER:-}" != "1" && -t 1 ]] && cat "${XDG_DATA_HOME:-$HOME/.local/share}/ccswitch/banner" 2>/dev/null && echo
 LAUNCHER
+
+  # Append name display and exports using printf %q
+  echo "echo \"    + $name (local)\" && echo" >> "$BIN_DIR/ccswitch-$name"
+  printf 'export ANTHROPIC_BASE_URL=%q\n' "$baseurl" >> "$BIN_DIR/ccswitch-$name"
 
   if [[ -n "$auth_token" ]]; then
-    cat >> "$BIN_DIR/ccswitch-$name" << LAUNCHER
-export ANTHROPIC_AUTH_TOKEN="$auth_token"
-export ANTHROPIC_API_KEY=""
-LAUNCHER
+    printf 'export ANTHROPIC_AUTH_TOKEN=%q\n' "$auth_token" >> "$BIN_DIR/ccswitch-$name"
+    echo 'export ANTHROPIC_API_KEY=""' >> "$BIN_DIR/ccswitch-$name"
   fi
 
-  [[ -n "$model" ]] && echo "export ANTHROPIC_MODEL=\"$model\"" >> "$BIN_DIR/ccswitch-$name"
+  if [[ -n "$model" ]]; then
+    validate_safe_value "$model" "model name" || return 1
+    printf 'export ANTHROPIC_MODEL=%q\n' "$model" >> "$BIN_DIR/ccswitch-$name"
+  fi
 
   # Parse model_opts
   if [[ -n "$model_opts" ]]; then
     IFS=',' read -ra opts <<< "$model_opts"
     for opt in "${opts[@]}"; do
       IFS='=' read -r key val <<< "$opt"
+      validate_safe_value "$val" "model option" || continue
       case "$key" in
-        haiku)  echo "export ANTHROPIC_DEFAULT_HAIKU_MODEL=\"$val\"" >> "$BIN_DIR/ccswitch-$name" ;;
-        sonnet) echo "export ANTHROPIC_DEFAULT_SONNET_MODEL=\"$val\"" >> "$BIN_DIR/ccswitch-$name" ;;
-        opus)   echo "export ANTHROPIC_DEFAULT_OPUS_MODEL=\"$val\"" >> "$BIN_DIR/ccswitch-$name" ;;
-        small)  echo "export ANTHROPIC_SMALL_FAST_MODEL=\"$val\"" >> "$BIN_DIR/ccswitch-$name" ;;
+        haiku)  printf 'export ANTHROPIC_DEFAULT_HAIKU_MODEL=%q\n' "$val" >> "$BIN_DIR/ccswitch-$name" ;;
+        sonnet) printf 'export ANTHROPIC_DEFAULT_SONNET_MODEL=%q\n' "$val" >> "$BIN_DIR/ccswitch-$name" ;;
+        opus)   printf 'export ANTHROPIC_DEFAULT_OPUS_MODEL=%q\n' "$val" >> "$BIN_DIR/ccswitch-$name" ;;
+        small)  printf 'export ANTHROPIC_SMALL_FAST_MODEL=%q\n' "$val" >> "$BIN_DIR/ccswitch-$name" ;;
       esac
     done
   fi
@@ -1650,14 +1747,19 @@ do_install() {
   fi
   success "'claude' found"
 
-  # Back up secrets and model pins before cleaning
+  # Back up secrets and model pins before cleaning (use DATA_DIR parent, not /tmp)
   local secrets_tmp="" pins_tmp=""
+  _cleanup_install_temps() {
+    [[ -n "$secrets_tmp" && -f "$secrets_tmp" ]] && rm -f "$secrets_tmp"
+    [[ -n "$pins_tmp" && -f "$pins_tmp" ]] && rm -f "$pins_tmp"
+  }
+  trap '_cleanup_install_temps' RETURN
   if [[ -f "$SECRETS_FILE" ]]; then
-    secrets_tmp=$(mktemp "${TMPDIR:-/tmp}/ccswitch-secrets.XXXXXX")
+    secrets_tmp=$(mktemp "$(dirname "$SECRETS_FILE")/secrets-backup.XXXXXX")
     cp -p "$SECRETS_FILE" "$secrets_tmp"
   fi
   if [[ -f "$PINS_FILE" ]]; then
-    pins_tmp=$(mktemp "${TMPDIR:-/tmp}/ccswitch-pins.XXXXXX")
+    pins_tmp=$(mktemp "$(dirname "$PINS_FILE")/pins-backup.XXXXXX")
     cp -p "$PINS_FILE" "$pins_tmp"
   fi
   rm -f "$BIN_DIR/ccswitch" "$BIN_DIR"/ccswitch-* 2>/dev/null || true
@@ -1670,9 +1772,11 @@ do_install() {
   if [[ -n "$secrets_tmp" && -f "$secrets_tmp" ]]; then
     mv "$secrets_tmp" "$SECRETS_FILE"
     chmod 600 "$SECRETS_FILE"
+    secrets_tmp=""  # Clear so cleanup trap doesn't try to remove
   fi
   if [[ -n "$pins_tmp" && -f "$pins_tmp" ]]; then
     mv "$pins_tmp" "$PINS_FILE"
+    pins_tmp=""
   fi
 
   # Save banner
@@ -1753,7 +1857,17 @@ MAINEOF
   # Copy this script as the full implementation
   if [[ ! -f "${BASH_SOURCE[0]:-}" ]]; then
     # Piped execution - download from GitHub
-    curl -fsSL https://raw.githubusercontent.com/ggujunhi/ccswitch/main/ccswitch.sh > "$DATA_DIR/ccswitch-full.sh"
+    local dl_tmp; dl_tmp=$(mktemp "$DATA_DIR/ccswitch-dl.XXXXXX")
+    if curl -fsSL https://raw.githubusercontent.com/ggujunhi/ccswitch/main/ccswitch.sh -o "$dl_tmp" 2>/dev/null \
+       && bash -n "$dl_tmp" 2>/dev/null \
+       && grep -q 'get_provider_def' "$dl_tmp" \
+       && grep -q 'load_secrets' "$dl_tmp"; then
+      mv "$dl_tmp" "$DATA_DIR/ccswitch-full.sh"
+    else
+      rm -f "$dl_tmp"
+      error "Download validation failed"
+      exit 1
+    fi
   else
     cp "${BASH_SOURCE[0]}" "$DATA_DIR/ccswitch-full.sh"
   fi
@@ -1850,7 +1964,8 @@ check_update() {
 
 do_self_update() {
   log "Downloading v$VERSION -> latest..."
-  local tmp; tmp=$(mktemp "${TMPDIR:-/tmp}/ccswitch-update.XXXXXX")
+  mkdir -p "$DATA_DIR"
+  local tmp; tmp=$(mktemp "$DATA_DIR/ccswitch-update.XXXXXX")
   if ! curl -fsSL --max-time 15 "$CCSWITCH_RAW" -o "$tmp" 2>/dev/null; then
     error "Download failed"
     rm -f "$tmp"
@@ -1871,6 +1986,16 @@ do_self_update() {
     rm -f "$tmp"
     return 1
   fi
+
+  # Structural integrity check: verify essential markers exist
+  local markers=("get_provider_def" "load_secrets" "generate_launcher" "cmd_config" "main")
+  for marker in "${markers[@]}"; do
+    if ! grep -q "$marker" "$tmp"; then
+      error "Downloaded script missing essential function '$marker', aborting"
+      rm -f "$tmp"
+      return 1
+    fi
+  done
 
   # Replace the full script
   cp "$tmp" "$DATA_DIR/ccswitch-full.sh"
