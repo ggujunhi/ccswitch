@@ -112,6 +112,9 @@ ${BOLD}COMMANDS${NC}
   info <provider>      Show details for a provider
   test [provider]      Test provider connectivity
   default [provider]   Set default provider for 'claude' command
+  default -f <prov>    Force mode: wrap claude binary (all contexts)
+  default -f -b <prov> Force + bypass permissions (full auto)
+  default reset        Restore native claude + permissions
   status               Show current CCSwitch state
   update               Check for and install updates
   uninstall            Remove CCSwitch completely

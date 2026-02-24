@@ -39,6 +39,7 @@ Forked from [Clother](https://github.com/jolehuit/clother) with bug fixes, WSL/L
   - [Provider Info & Testing](#provider-info--testing)
   - [Model Management](#model-management)
   - [API Key Management](#api-key-management)
+  - [Default Provider](#default-provider)
   - [Status & Updates](#status--updates)
 - [Supported Providers](#supported-providers)
   - [Cloud Providers](#cloud-providers)
@@ -301,6 +302,41 @@ ccswitch keys set openrouter sk-or-v1-xxxxx
 
 # Delete API key
 ccswitch keys delete openrouter
+```
+
+### Default Provider
+
+Set a default provider so that the `claude` command automatically routes through CCSwitch.
+
+| Command | Description |
+|---------|-------------|
+| `ccswitch default` | Show current default provider |
+| `ccswitch default <provider>` | Set default (shell hook, interactive shells only) |
+| `ccswitch default --force <provider>` | Wrap claude binary (works in ALL contexts) |
+| `ccswitch default -f -b <provider>` | Force + bypass permissions (full automation) |
+| `ccswitch default reset` | Restore native claude + original permissions |
+
+**Modes:**
+
+- **Hook** (default): Adds a shell function to `.bashrc`/`.zshrc`. Only works in interactive shells.
+- **Force** (`--force`/`-f`): Replaces the `claude` binary with a routing wrapper. Works everywhere including OMC agents, subprocesses, and scripts. The original binary is backed up as `claude-original`.
+- **Bypass** (`--bypass`/`-b`): Sets `bypassPermissions` in `~/.claude/settings.json` so all tool calls are auto-approved (deny list still enforced). Backs up `settings.json` for clean restore.
+
+```bash
+# Shell hook only (interactive shells)
+ccswitch default zai
+
+# Force mode: works in OMC, subprocesses, scripts
+ccswitch default --force zai
+
+# Full automation: force + bypass permissions
+ccswitch default -f -b zai
+
+# Per-session override (tmux pane)
+export CCSWITCH_DEFAULT_PROVIDER=zai
+
+# Restore everything (binary + permissions + hook)
+ccswitch default reset
 ```
 
 ### Status & Updates
