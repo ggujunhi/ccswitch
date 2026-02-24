@@ -224,20 +224,28 @@ ${BOLD}USAGE${NC}
   ccswitch default                       # Show current default
   ccswitch default <provider>            # Shell hook (interactive shells only)
   ccswitch default --force <provider>    # Wrap claude binary (ALL contexts)
-  ccswitch default reset                 # Restore native claude
+  ccswitch default -f -b <provider>      # Wrap + bypass permissions
+  ccswitch default reset                 # Restore everything
+
+${BOLD}FLAGS${NC}
+  --force, -f    Replace claude binary with routing wrapper
+  --bypass, -b   Set bypassPermissions in ~/.claude/settings.json
 
 ${BOLD}MODES${NC}
   ${DIM}Hook (default):${NC}   Shell function in .bashrc/.zshrc. Only interactive shells.
   ${DIM}Force (--force):${NC}  Replaces claude binary with wrapper. Works everywhere
                     including OMC agents, subprocesses, and scripts.
+  ${DIM}Bypass (--bypass):${NC} Auto-approve all tool calls (deny list still enforced).
 
 ${BOLD}EXAMPLES${NC}
-  ${GREEN}ccswitch default zai${NC}             # Hook mode
-  ${GREEN}ccswitch default --force zai${NC}     # Force mode (OMC compatible)
-  ${GREEN}ccswitch default reset${NC}           # Restore native Anthropic
+  ${GREEN}ccswitch default zai${NC}              # Hook mode
+  ${GREEN}ccswitch default --force zai${NC}      # Force mode (OMC compatible)
+  ${GREEN}ccswitch default -f -b zai${NC}        # Force + bypass (full auto)
+  ${GREEN}ccswitch default reset${NC}            # Restore native + permissions
 
 ${BOLD}NOTES${NC}
   Force mode backs up claude as 'claude-original' and creates a wrapper.
+  Bypass mode backs up settings.json and restores on reset.
   Per-session override: ${GREEN}export CCSWITCH_DEFAULT_PROVIDER=zai${NC}
 EOF
       ;;
