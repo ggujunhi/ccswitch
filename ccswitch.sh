@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# CCSWITCH v1.0.0 - Multi-provider launcher for Claude CLI
+# CCSWITCH v1.1.0 - Multi-provider launcher for Claude CLI
 # =============================================================================
 # A CLI tool to manage and switch between different LLM providers
 # for the Claude Code command-line interface.
@@ -13,8 +13,10 @@ set -euo pipefail
 IFS=$'\n\t'
 umask 077
 
-readonly VERSION="1.0.0"
+readonly VERSION="1.1.0"
 readonly CCSWITCH_DOCS="https://github.com/ggujunhi/ccswitch"
+readonly CCSWITCH_RAW="https://raw.githubusercontent.com/ggujunhi/ccswitch/main/ccswitch.sh"
+readonly UPDATE_CHECK_INTERVAL=86400  # 24 hours
 
 # =============================================================================
 # XDG BASE DIRECTORY SPECIFICATION
@@ -468,6 +470,7 @@ ${BOLD}COMMANDS${NC}
   info <provider>      Show details for a provider
   test [provider]      Test provider connectivity
   status               Show current CCSwitch state
+  update               Check for and install updates
   uninstall            Remove CCSwitch completely
   help [command]       Show help (contextual if command given)
 
@@ -518,6 +521,7 @@ ${BOLD}ENVIRONMENT${NC}
   CCSWITCH_DEFAULT_PROVIDER  Default provider to use
   CCSWITCH_VERBOSE      Enable verbose mode (1)
   CCSWITCH_QUIET        Enable quiet mode (1)
+  CCSWITCH_NO_UPDATE    Disable auto-update check (1)
   CCSWITCH_YES          Auto-confirm prompts (1)
   NO_COLOR             Disable colors (standard)
 
@@ -1363,6 +1367,106 @@ parse_args() {
 }
 
 # =============================================================================
+# AUTO-UPDATE
+# =============================================================================
+
+check_update() {
+  # Skip if explicitly disabled or non-interactive
+  [[ "${CCSWITCH_NO_UPDATE:-}" == "1" ]] && return 0
+  [[ ! -t 1 ]] && return 0
+
+  local stamp_file="$CACHE_DIR/last_update_check"
+  mkdir -p "$CACHE_DIR"
+
+  # Only check once per UPDATE_CHECK_INTERVAL
+  if [[ -f "$stamp_file" ]]; then
+    local last_check
+    last_check=$(cat "$stamp_file" 2>/dev/null || echo 0)
+    local now; now=$(date +%s)
+    if (( now - last_check < UPDATE_CHECK_INTERVAL )); then
+      return 0
+    fi
+  fi
+
+  # Record check time
+  date +%s > "$stamp_file"
+
+  # Fetch remote version (timeout 3s, background-safe)
+  local remote_version
+  remote_version=$(curl -fsSL --max-time 3 "$CCSWITCH_RAW" 2>/dev/null | grep -m1 '^readonly VERSION=' | sed 's/.*="\(.*\)"/\1/') || return 0
+
+  [[ -z "$remote_version" ]] && return 0
+  [[ "$remote_version" == "$VERSION" ]] && return 0
+
+  echo
+  log "New version available: ${GREEN}v$remote_version${NC} (current: v$VERSION)"
+  local do_update="n"
+  if [[ "${YES_MODE:-0}" == "1" ]]; then
+    do_update="y"
+  else
+    confirm "Update now?" && do_update="y"
+  fi
+
+  if [[ "$do_update" == "y" ]]; then
+    do_self_update
+  else
+    log "Skip update. Run ${CYAN}ccswitch update${NC} to update manually."
+  fi
+}
+
+do_self_update() {
+  log "Downloading v$VERSION -> latest..."
+  local tmp; tmp=$(mktemp "${TMPDIR:-/tmp}/ccswitch-update.XXXXXX")
+  if ! curl -fsSL --max-time 15 "$CCSWITCH_RAW" -o "$tmp" 2>/dev/null; then
+    error "Download failed"
+    rm -f "$tmp"
+    return 1
+  fi
+
+  # Validate downloaded script
+  if ! bash -n "$tmp" 2>/dev/null; then
+    error "Downloaded script has syntax errors, aborting update"
+    rm -f "$tmp"
+    return 1
+  fi
+
+  local new_version
+  new_version=$(grep -m1 '^readonly VERSION=' "$tmp" | sed 's/.*="\(.*\)"/\1/')
+  if [[ -z "$new_version" ]]; then
+    error "Could not determine version of downloaded script"
+    rm -f "$tmp"
+    return 1
+  fi
+
+  # Replace the full script
+  cp "$tmp" "$DATA_DIR/ccswitch-full.sh"
+  chmod +x "$DATA_DIR/ccswitch-full.sh"
+  rm -f "$tmp"
+
+  success "Updated to v$new_version"
+  log "Restart ccswitch to use the new version."
+}
+
+cmd_update() {
+  log "Checking for updates..."
+  local remote_version
+  remote_version=$(curl -fsSL --max-time 5 "$CCSWITCH_RAW" 2>/dev/null | grep -m1 '^readonly VERSION=' | sed 's/.*="\(.*\)"/\1/') || true
+
+  if [[ -z "$remote_version" ]]; then
+    error "Could not reach update server"
+    return 1
+  fi
+
+  if [[ "$remote_version" == "$VERSION" ]]; then
+    success "Already on latest version (v$VERSION)"
+    return 0
+  fi
+
+  log "New version available: ${GREEN}v$remote_version${NC} (current: v$VERSION)"
+  do_self_update
+}
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
@@ -1373,6 +1477,9 @@ main() {
   local cmd="${1:-}"
   shift || true
 
+  # Auto-update check (silent, non-blocking)
+  [[ "$cmd" != "update" && "$cmd" != "uninstall" ]] && check_update
+
   case "$cmd" in
     "")         show_brief_help ;;
     config)     cmd_config "$@" ;;
@@ -1381,6 +1488,7 @@ main() {
     test)       cmd_test "$@" ;;
     status)     cmd_status "$@" ;;
     uninstall)  cmd_uninstall "$@" ;;
+    update)     cmd_update ;;
     help)       [[ -n "${1:-}" ]] && show_command_help "$1" || show_full_help ;;
     install)    do_install ;;
     *)
