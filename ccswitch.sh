@@ -1495,16 +1495,19 @@ cmd_test() {
     fi
 
     # Test with a real API call to /v1/messages (minimal request, max_tokens=1)
-    # This validates: endpoint reachability, correct URL, and API key validity
+    # Send both x-api-key and Authorization headers (providers vary on which they accept)
+    # Use the provider's actual model name, not a hardcoded one
     local api_key="${!keyvar:-}"
     local api_url="${test_url%/}/v1/messages"
+    local model; model=$(resolve_model "$p" 2>/dev/null) || model="claude-sonnet-4-20250514"
     local http_code body
     body=$(curl -s --max-time 8 -w "\n%{http_code}" \
       -X POST "$api_url" \
       -H "content-type: application/json" \
       -H "x-api-key: $api_key" \
+      -H "Authorization: Bearer $api_key" \
       -H "anthropic-version: 2023-06-01" \
-      -d '{"model":"claude-sonnet-4-20250514","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}' \
+      -d "{\"model\":\"$model\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}" \
       2>/dev/null) || body=""
     http_code="${body##*$'\n'}"
     body="${body%$'\n'*}"
