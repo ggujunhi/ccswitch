@@ -1510,7 +1510,11 @@ CLAUDE_SETTINGS="${HOME}/.claude/settings.json"
 
 # Locate the real claude binary (skipping any ccswitch wrapper)
 find_real_claude() {
-  if [[ -f "$BIN_DIR/claude-original" ]]; then
+  # Check for backup (with or without .exe for Windows)
+  if [[ -f "$BIN_DIR/claude-original.exe" ]]; then
+    echo "$BIN_DIR/claude-original.exe"
+    return 0
+  elif [[ -f "$BIN_DIR/claude-original" ]]; then
     echo "$BIN_DIR/claude-original"
     return 0
   fi
@@ -1525,7 +1529,7 @@ find_real_claude() {
 
 # Check if force mode is currently active
 is_force_active() {
-  [[ -f "$BIN_DIR/claude-original" ]] && [[ -f "$DATA_DIR/force-mode" ]]
+  { [[ -f "$BIN_DIR/claude-original" ]] || [[ -f "$BIN_DIR/claude-original.exe" ]]; } && [[ -f "$DATA_DIR/force-mode" ]]
 }
 
 # Check if bypass was set by ccswitch
@@ -1696,31 +1700,68 @@ default_force() {
     return 1
   }
 
-  # Back up original if not already done
-  if [[ ! -f "$BIN_DIR/claude-original" ]]; then
-    log "Backing up claude binary..."
-    cp "$real_claude" "$BIN_DIR/claude-original"
-    chmod +x "$BIN_DIR/claude-original"
+  # Detect Windows .exe binary
+  local is_win_exe=false
+  if [[ -f "$BIN_DIR/claude.exe" ]]; then
+    is_win_exe=true
   fi
 
-  # Create wrapper script that replaces the claude binary
-  cat > "$BIN_DIR/claude" << 'WRAPPER'
+  # Back up original if not already done
+  if [[ "$is_win_exe" == true ]]; then
+    # Windows: claude.exe is a native PE binary
+    if [[ ! -f "$BIN_DIR/claude-original.exe" ]]; then
+      log "Backing up claude.exe..."
+      cp "$BIN_DIR/claude.exe" "$BIN_DIR/claude-original.exe" || {
+        error "Could not back up claude.exe"
+        return 1
+      }
+      chmod +x "$BIN_DIR/claude-original.exe"
+    fi
+    # Rename claude.exe out of the way (rename is allowed on running .exe on modern Windows)
+    if [[ -f "$BIN_DIR/claude.exe" ]]; then
+      mv "$BIN_DIR/claude.exe" "$BIN_DIR/claude-native.exe" 2>/dev/null || {
+        error "Cannot rename claude.exe (it may be running)"
+        echo -e "  ${DIM}${SYM_ARROW}${NC} Close Claude Code first, then retry: ${GREEN}ccswitch default -f $provider${NC}"
+        return 1
+      }
+    fi
+  else
+    # Unix: standard binary
+    if [[ ! -f "$BIN_DIR/claude-original" ]]; then
+      log "Backing up claude binary..."
+      cp "$real_claude" "$BIN_DIR/claude-original"
+      chmod +x "$BIN_DIR/claude-original"
+    fi
+  fi
+
+  # Determine the fallback binary name for the wrapper
+  local fallback_bin="claude-original"
+  if [[ "$is_win_exe" == true ]]; then
+    fallback_bin="claude-original.exe"
+  fi
+
+  # Create wrapper script
+  # On Windows: claude.exe is renamed away, so 'claude' (no ext) is found first by bash
+  # On Unix: overwrites the original claude binary
+  # Note: shebang is written separately to survive build.sh strip_module
+  printf '%s\n' '#!/usr/bin/env bash' > "$BIN_DIR/claude"
+  cat >> "$BIN_DIR/claude" << WRAPPER
 set -euo pipefail
-_CCS_DATA="${XDG_DATA_HOME:-$HOME/.local/share}/ccswitch"
-_CCS_BIN="${HOME}/.local/bin"
-[[ "$(uname)" == "Darwin" ]] && _CCS_BIN="${HOME}/bin"
+_CCS_DATA="\${XDG_DATA_HOME:-\$HOME/.local/share}/ccswitch"
+_CCS_BIN="\${HOME}/.local/bin"
+[[ "\$(uname)" == "Darwin" ]] && _CCS_BIN="\${HOME}/bin"
 
 # Determine provider: env var > file > native
-_PROVIDER="${CCSWITCH_DEFAULT_PROVIDER:-}"
-if [[ -z "$_PROVIDER" && -f "$_CCS_DATA/default-provider" ]]; then
-  _PROVIDER=$(cat "$_CCS_DATA/default-provider")
+_PROVIDER="\${CCSWITCH_DEFAULT_PROVIDER:-}"
+if [[ -z "\$_PROVIDER" && -f "\$_CCS_DATA/default-provider" ]]; then
+  _PROVIDER=\$(cat "\$_CCS_DATA/default-provider")
 fi
 
 # Route to provider launcher or fall back to original binary
-if [[ -n "$_PROVIDER" && "$_PROVIDER" != "native" && -x "$_CCS_BIN/ccswitch-$_PROVIDER" ]]; then
-  exec "$_CCS_BIN/ccswitch-$_PROVIDER" "$@"
+if [[ -n "\$_PROVIDER" && "\$_PROVIDER" != "native" && -x "\$_CCS_BIN/ccswitch-\$_PROVIDER" ]]; then
+  exec "\$_CCS_BIN/ccswitch-\$_PROVIDER" "\$@"
 else
-  exec "$_CCS_BIN/claude-original" "$@"
+  exec "\$_CCS_BIN/$fallback_bin" "\$@"
 fi
 WRAPPER
   chmod +x "$BIN_DIR/claude"
@@ -1733,7 +1774,11 @@ WRAPPER
   echo
   echo -e "  ${DIM}${SYM_ARROW}${NC} ${GREEN}claude${NC} binary wrapped -> routes through ccswitch-$provider"
   echo -e "  ${DIM}${SYM_ARROW}${NC} Works in ALL contexts (OMC, subprocesses, scripts)"
-  echo -e "  ${DIM}${SYM_ARROW}${NC} Original backed up as ${DIM}claude-original${NC}"
+  if [[ "$is_win_exe" == true ]]; then
+    echo -e "  ${DIM}${SYM_ARROW}${NC} Original: ${DIM}claude-original.exe${NC} (claude.exe renamed to claude-native.exe)"
+  else
+    echo -e "  ${DIM}${SYM_ARROW}${NC} Original backed up as ${DIM}claude-original${NC}"
+  fi
   echo -e "  ${DIM}${SYM_ARROW}${NC} tmux override: ${GREEN}export CCSWITCH_DEFAULT_PROVIDER=zai${NC}"
   echo -e "  ${DIM}${SYM_ARROW}${NC} Restore: ${GREEN}ccswitch default reset${NC}"
 }
@@ -1793,8 +1838,15 @@ default_reset() {
   # Restore force mode: put original binary back
   if is_force_active; then
     log "Restoring original claude binary..."
-    rm -f "$BIN_DIR/claude"
-    mv "$BIN_DIR/claude-original" "$BIN_DIR/claude"
+    if [[ -f "$BIN_DIR/claude-original.exe" ]]; then
+      # Windows: remove bash wrapper, restore .exe
+      rm -f "$BIN_DIR/claude"
+      rm -f "$BIN_DIR/claude-native.exe"
+      mv "$BIN_DIR/claude-original.exe" "$BIN_DIR/claude.exe"
+    else
+      rm -f "$BIN_DIR/claude"
+      mv "$BIN_DIR/claude-original" "$BIN_DIR/claude"
+    fi
     rm -f "$DATA_DIR/force-mode"
     success "Restored native claude ${DIM}(binary unwrapped)${NC}"
   else
@@ -2369,8 +2421,23 @@ parse_args() {
       --json)       OUTPUT_FORMAT=json ;;
       --plain)      OUTPUT_FORMAT=plain; NO_COLOR=1; setup_colors ;;
       --)           shift; REMAINING_ARGS+=("$@"); break ;;
-      -*)           error "Unknown option: $1"; echo "Use --help for usage"; exit 1 ;;
-      *)            REMAINING_ARGS+=("$1") ;;
+      -*)
+        # If we already have a subcommand, pass remaining args (including flags) to it
+        if [[ ${#REMAINING_ARGS[@]} -gt 0 ]]; then
+          REMAINING_ARGS+=("$1")
+        else
+          error "Unknown option: $1"; echo "Use --help for usage"; exit 1
+        fi
+        ;;
+      *)
+        # First non-option is the subcommand; after that, pass everything through
+        REMAINING_ARGS+=("$1")
+        if [[ ${#REMAINING_ARGS[@]} -eq 1 ]]; then
+          shift
+          REMAINING_ARGS+=("$@")
+          break
+        fi
+        ;;
     esac
     shift
   done

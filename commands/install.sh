@@ -479,8 +479,23 @@ parse_args() {
       --json)       OUTPUT_FORMAT=json ;;
       --plain)      OUTPUT_FORMAT=plain; NO_COLOR=1; setup_colors ;;
       --)           shift; REMAINING_ARGS+=("$@"); break ;;
-      -*)           error "Unknown option: $1"; echo "Use --help for usage"; exit 1 ;;
-      *)            REMAINING_ARGS+=("$1") ;;
+      -*)
+        # If we already have a subcommand, pass remaining args (including flags) to it
+        if [[ ${#REMAINING_ARGS[@]} -gt 0 ]]; then
+          REMAINING_ARGS+=("$1")
+        else
+          error "Unknown option: $1"; echo "Use --help for usage"; exit 1
+        fi
+        ;;
+      *)
+        # First non-option is the subcommand; after that, pass everything through
+        REMAINING_ARGS+=("$1")
+        if [[ ${#REMAINING_ARGS[@]} -eq 1 ]]; then
+          shift
+          REMAINING_ARGS+=("$@")
+          break
+        fi
+        ;;
     esac
     shift
   done
