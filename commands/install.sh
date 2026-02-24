@@ -540,6 +540,8 @@ check_update() {
 
   if [[ "$do_update" == "y" ]]; then
     do_self_update
+    # Exit immediately: the script file was replaced mid-execution
+    exit 0
   else
     log "Skip update. Run ${CYAN}ccswitch update${NC} to update manually."
   fi
@@ -606,4 +608,7 @@ cmd_update() {
 
   log "New version available: ${GREEN}v$remote_version${NC} (current: v$VERSION)"
   do_self_update
+  # Exit immediately: do_self_update replaced ccswitch-full.sh which bash is
+  # currently reading by byte offset.  Continuing would read garbled content.
+  exit 0
 }

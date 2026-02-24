@@ -861,12 +861,12 @@ ${BOLD}Usage:${NC} ccswitch [options] <command>
 
 ${BOLD}Commands:${NC}
   config       Configure a provider
+  default      Set default provider for 'claude'
   keys         Manage API keys (list/set/delete)
   models       Manage provider models (list/update/pin)
   list         List profiles
   info <name>  Provider details
   test         Test providers
-  default      Set default provider for 'claude'
   update       Check for updates
   help         Show full help
 
@@ -1012,6 +1012,24 @@ ${BOLD}EXAMPLES${NC}
   ${GREEN}ccswitch list${NC}                # Human-readable
   ${GREEN}ccswitch list --json${NC}         # For scripting
   ${GREEN}ccswitch list | grep zai${NC}     # Filter
+EOF
+      ;;
+    default)
+      cat << EOF
+${BOLD}ccswitch default${NC} - Set default provider for 'claude' command
+
+${BOLD}USAGE${NC}
+  ccswitch default              # Show current default
+  ccswitch default <provider>   # Set default provider
+  ccswitch default reset        # Restore native claude
+
+${BOLD}EXAMPLES${NC}
+  ${GREEN}ccswitch default zai${NC}         # 'claude' now uses Z.AI
+  ${GREEN}ccswitch default reset${NC}       # Restore native Anthropic
+
+${BOLD}NOTES${NC}
+  Sets a shell function that intercepts 'claude' to route through ccswitch.
+  Per-session override: ${GREEN}export CCSWITCH_DEFAULT_PROVIDER=zai${NC}
 EOF
       ;;
     *)
@@ -2168,6 +2186,8 @@ check_update() {
 
   if [[ "$do_update" == "y" ]]; then
     do_self_update
+    # Exit immediately: the script file was replaced mid-execution
+    exit 0
   else
     log "Skip update. Run ${CYAN}ccswitch update${NC} to update manually."
   fi
