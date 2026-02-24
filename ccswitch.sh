@@ -18,7 +18,7 @@ set -euo pipefail
 IFS=$'\n\t'
 umask 077
 
-readonly VERSION="1.5.1"
+readonly VERSION="1.5.2"
 readonly CCSWITCH_DOCS="https://github.com/ggujunhi/ccswitch"
 readonly CCSWITCH_RAW="https://raw.githubusercontent.com/ggujunhi/ccswitch/main/ccswitch.sh"
 readonly REGISTRY_URL="https://raw.githubusercontent.com/ggujunhi/ccswitch/main/models.json"
@@ -910,6 +910,9 @@ ${BOLD}COMMANDS${NC}
   info <provider>      Show details for a provider
   test [provider]      Test provider connectivity
   default [provider]   Set default provider for 'claude' command
+  default -f <prov>    Force mode: wrap claude binary (all contexts)
+  default -f -b <prov> Force + bypass permissions (full auto)
+  default reset        Restore native claude + permissions
   status               Show current CCSwitch state
   update               Check for and install updates
   uninstall            Remove CCSwitch completely
