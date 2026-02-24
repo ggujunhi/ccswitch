@@ -221,16 +221,23 @@ EOF
 ${BOLD}ccswitch default${NC} - Set default provider for 'claude' command
 
 ${BOLD}USAGE${NC}
-  ccswitch default              # Show current default
-  ccswitch default <provider>   # Set default provider
-  ccswitch default reset        # Restore native claude
+  ccswitch default                       # Show current default
+  ccswitch default <provider>            # Shell hook (interactive shells only)
+  ccswitch default --force <provider>    # Wrap claude binary (ALL contexts)
+  ccswitch default reset                 # Restore native claude
+
+${BOLD}MODES${NC}
+  ${DIM}Hook (default):${NC}   Shell function in .bashrc/.zshrc. Only interactive shells.
+  ${DIM}Force (--force):${NC}  Replaces claude binary with wrapper. Works everywhere
+                    including OMC agents, subprocesses, and scripts.
 
 ${BOLD}EXAMPLES${NC}
-  ${GREEN}ccswitch default zai${NC}         # 'claude' now uses Z.AI
-  ${GREEN}ccswitch default reset${NC}       # Restore native Anthropic
+  ${GREEN}ccswitch default zai${NC}             # Hook mode
+  ${GREEN}ccswitch default --force zai${NC}     # Force mode (OMC compatible)
+  ${GREEN}ccswitch default reset${NC}           # Restore native Anthropic
 
 ${BOLD}NOTES${NC}
-  Sets a shell function that intercepts 'claude' to route through ccswitch.
+  Force mode backs up claude as 'claude-original' and creates a wrapper.
   Per-session override: ${GREEN}export CCSWITCH_DEFAULT_PROVIDER=zai${NC}
 EOF
       ;;
