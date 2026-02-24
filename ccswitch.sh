@@ -18,7 +18,7 @@ set -euo pipefail
 IFS=$'\n\t'
 umask 077
 
-readonly VERSION="1.4.4"
+readonly VERSION="1.4.5"
 readonly CCSWITCH_DOCS="https://github.com/ggujunhi/ccswitch"
 readonly CCSWITCH_RAW="https://raw.githubusercontent.com/ggujunhi/ccswitch/main/ccswitch.sh"
 readonly REGISTRY_URL="https://raw.githubusercontent.com/ggujunhi/ccswitch/main/models.json"
@@ -2217,10 +2217,13 @@ do_self_update() {
     fi
   done
 
-  # Replace the full script
-  cp "$tmp" "$DATA_DIR/ccswitch-full.sh"
+  # Replace the full script using rm+mv instead of cp so the new file
+  # gets a new inode.  Bash keeps the old inode open (readable until the
+  # process exits), so continuing execution reads stable old content
+  # rather than garbled new content at the wrong byte offset.
+  rm -f "$DATA_DIR/ccswitch-full.sh"
+  mv "$tmp" "$DATA_DIR/ccswitch-full.sh"
   chmod +x "$DATA_DIR/ccswitch-full.sh"
-  rm -f "$tmp"
 
   success "Updated to v$new_version"
   log "Restart ccswitch to use the new version."
