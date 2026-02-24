@@ -13,7 +13,7 @@ set -euo pipefail
 IFS=$'\n\t'
 umask 077
 
-readonly VERSION="1.2.0"
+readonly VERSION="1.2.1"
 readonly CCSWITCH_DOCS="https://github.com/ggujunhi/ccswitch"
 readonly CCSWITCH_RAW="https://raw.githubusercontent.com/ggujunhi/ccswitch/main/ccswitch.sh"
 readonly UPDATE_CHECK_INTERVAL=86400  # 24 hours
@@ -1144,18 +1144,21 @@ cmd_test() {
       continue
     fi
 
-    # Test endpoint: try HTTP first, fall back to TLS-connect check
-    # Many API servers reject bare GET but are fully operational
-    local http_code tls_time
-    http_code=$(curl -s --max-time 5 -o /dev/null -w "%{http_code}" "$test_url" 2>/dev/null) || http_code="000"
-    if [[ "$http_code" != "000" ]]; then
+    # Test endpoint: try HTTP first, fall back to TCP connect check
+    # Many API servers (e.g. api.z.ai) reject bare GET with HTTP/2
+    # errors but are fully operational for real API calls
+    local http_code
+    http_code=$(curl -s --max-time 5 -o /dev/null -w "%{http_code}" "$test_url" 2>/dev/null) || http_code=""
+    if [[ -n "$http_code" && "$http_code" != "000" ]]; then
       echo -e "${GREEN}${SYM_OK} reachable${NC} ${DIM}(HTTP $http_code)${NC}"
       ((++ok)) || true
     else
-      # HTTP failed (stream error, etc.) -- check if TLS handshake works
-      tls_time=$(curl -s --max-time 5 -o /dev/null -w "%{time_appconnect}" "$test_url" 2>/dev/null) || tls_time="0"
-      if [[ "$tls_time" != "0" && "$tls_time" != "0.000000" ]]; then
-        echo -e "${GREEN}${SYM_OK} connected${NC} ${DIM}(TLS ok)${NC}"
+      # HTTP failed or curl crashed -- fall back to TCP connect
+      local host; host=$(echo "$test_url" | sed 's|https\?://\([^/:]*\).*|\1|')
+      local port=443
+      [[ "$test_url" =~ http:// ]] && port=80
+      if timeout 3 bash -c "echo >/dev/tcp/\$1/\$2" _ "$host" "$port" 2>/dev/null; then
+        echo -e "${GREEN}${SYM_OK} connected${NC} ${DIM}(TCP ok)${NC}"
         ((++ok)) || true
       else
         echo -e "${RED}${SYM_ERR} unreachable${NC}"
