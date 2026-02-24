@@ -325,10 +325,21 @@ do_install() {
   local secrets_tmp="" pins_tmp=""
   local _backup_dir; _backup_dir="$(dirname "$DATA_DIR")"
   _cleanup_install_temps() {
-    [[ -n "$secrets_tmp" && -f "$secrets_tmp" ]] && rm -f "$secrets_tmp"
-    [[ -n "$pins_tmp" && -f "$pins_tmp" ]] && rm -f "$pins_tmp"
+    # If secrets_tmp is still set, restore was never completed - try to recover
+    if [[ -n "$secrets_tmp" && -f "$secrets_tmp" ]]; then
+      mkdir -p "$DATA_DIR" 2>/dev/null || true
+      if mv "$secrets_tmp" "$SECRETS_FILE" 2>/dev/null; then
+        chmod 600 "$SECRETS_FILE" 2>/dev/null || true
+      else
+        rm -f "$secrets_tmp"
+      fi
+    fi
+    if [[ -n "$pins_tmp" && -f "$pins_tmp" ]]; then
+      mkdir -p "$DATA_DIR" 2>/dev/null || true
+      mv "$pins_tmp" "$PINS_FILE" 2>/dev/null || rm -f "$pins_tmp"
+    fi
   }
-  trap '_cleanup_install_temps' RETURN
+  trap '_cleanup_install_temps' RETURN EXIT INT TERM
   if [[ -f "$SECRETS_FILE" ]]; then
     secrets_tmp=$(mktemp "$_backup_dir/secrets-backup.XXXXXX")
     cp -p "$SECRETS_FILE" "$secrets_tmp"
