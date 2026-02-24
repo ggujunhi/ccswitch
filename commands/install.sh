@@ -321,19 +321,20 @@ do_install() {
   fi
   success "'claude' found"
 
-  # Back up secrets and model pins before cleaning (use DATA_DIR parent, not /tmp)
+  # Back up secrets and model pins before cleaning (use DATA_DIR parent, not DATA_DIR itself)
   local secrets_tmp="" pins_tmp=""
+  local _backup_dir; _backup_dir="$(dirname "$DATA_DIR")"
   _cleanup_install_temps() {
     [[ -n "$secrets_tmp" && -f "$secrets_tmp" ]] && rm -f "$secrets_tmp"
     [[ -n "$pins_tmp" && -f "$pins_tmp" ]] && rm -f "$pins_tmp"
   }
   trap '_cleanup_install_temps' RETURN
   if [[ -f "$SECRETS_FILE" ]]; then
-    secrets_tmp=$(mktemp "$(dirname "$SECRETS_FILE")/secrets-backup.XXXXXX")
+    secrets_tmp=$(mktemp "$_backup_dir/secrets-backup.XXXXXX")
     cp -p "$SECRETS_FILE" "$secrets_tmp"
   fi
   if [[ -f "$PINS_FILE" ]]; then
-    pins_tmp=$(mktemp "$(dirname "$PINS_FILE")/pins-backup.XXXXXX")
+    pins_tmp=$(mktemp "$_backup_dir/pins-backup.XXXXXX")
     cp -p "$PINS_FILE" "$pins_tmp"
   fi
 
