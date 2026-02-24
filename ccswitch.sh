@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
-# CC-SWITCHER v1.0.0 - Multi-provider launcher for Claude CLI
+# CCSWITCH v1.0.0 - Multi-provider launcher for Claude CLI
 # =============================================================================
 # A CLI tool to manage and switch between different LLM providers
 # for the Claude Code command-line interface.
 #
-# Repository: https://github.com/ggujunhi/cc-switcher
+# Repository: https://github.com/ggujunhi/ccswitch
 # License: MIT
 # =============================================================================
 
@@ -14,7 +14,7 @@ IFS=$'\n\t'
 umask 077
 
 readonly VERSION="1.0.0"
-readonly CC_SWITCHER_DOCS="https://github.com/ggujunhi/cc-switcher"
+readonly CCSWITCH_DOCS="https://github.com/ggujunhi/ccswitch"
 
 # =============================================================================
 # XDG BASE DIRECTORY SPECIFICATION
@@ -25,36 +25,36 @@ readonly XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 readonly XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
 
 # Backward compatibility: support CLOTHER_* env vars with deprecation
-if [[ -n "${CLOTHER_CONFIG_DIR:-}" ]] && [[ -z "${CC_SWITCHER_CONFIG_DIR:-}" ]]; then
-  CC_SWITCHER_CONFIG_DIR="$CLOTHER_CONFIG_DIR"
-  echo -e "\033[1;33m\u26a0\033[0m CLOTHER_CONFIG_DIR is deprecated, use CC_SWITCHER_CONFIG_DIR instead" >&2
+if [[ -n "${CLOTHER_CONFIG_DIR:-}" ]] && [[ -z "${CCSWITCH_CONFIG_DIR:-}" ]]; then
+  CCSWITCH_CONFIG_DIR="$CLOTHER_CONFIG_DIR"
+  echo -e "\033[1;33m\u26a0\033[0m CLOTHER_CONFIG_DIR is deprecated, use CCSWITCH_CONFIG_DIR instead" >&2
 fi
-if [[ -n "${CLOTHER_DATA_DIR:-}" ]] && [[ -z "${CC_SWITCHER_DATA_DIR:-}" ]]; then
-  CC_SWITCHER_DATA_DIR="$CLOTHER_DATA_DIR"
-  echo -e "\033[1;33m\u26a0\033[0m CLOTHER_DATA_DIR is deprecated, use CC_SWITCHER_DATA_DIR instead" >&2
+if [[ -n "${CLOTHER_DATA_DIR:-}" ]] && [[ -z "${CCSWITCH_DATA_DIR:-}" ]]; then
+  CCSWITCH_DATA_DIR="$CLOTHER_DATA_DIR"
+  echo -e "\033[1;33m\u26a0\033[0m CLOTHER_DATA_DIR is deprecated, use CCSWITCH_DATA_DIR instead" >&2
 fi
-if [[ -n "${CLOTHER_CACHE_DIR:-}" ]] && [[ -z "${CC_SWITCHER_CACHE_DIR:-}" ]]; then
-  CC_SWITCHER_CACHE_DIR="$CLOTHER_CACHE_DIR"
-  echo -e "\033[1;33m\u26a0\033[0m CLOTHER_CACHE_DIR is deprecated, use CC_SWITCHER_CACHE_DIR instead" >&2
+if [[ -n "${CLOTHER_CACHE_DIR:-}" ]] && [[ -z "${CCSWITCH_CACHE_DIR:-}" ]]; then
+  CCSWITCH_CACHE_DIR="$CLOTHER_CACHE_DIR"
+  echo -e "\033[1;33m\u26a0\033[0m CLOTHER_CACHE_DIR is deprecated, use CCSWITCH_CACHE_DIR instead" >&2
 fi
-if [[ -n "${CLOTHER_BIN:-}" ]] && [[ -z "${CC_SWITCHER_BIN:-}" ]]; then
-  CC_SWITCHER_BIN="$CLOTHER_BIN"
-  echo -e "\033[1;33m\u26a0\033[0m CLOTHER_BIN is deprecated, use CC_SWITCHER_BIN instead" >&2
+if [[ -n "${CLOTHER_BIN:-}" ]] && [[ -z "${CCSWITCH_BIN:-}" ]]; then
+  CCSWITCH_BIN="$CLOTHER_BIN"
+  echo -e "\033[1;33m\u26a0\033[0m CLOTHER_BIN is deprecated, use CCSWITCH_BIN instead" >&2
 fi
 
-readonly CONFIG_DIR="${CC_SWITCHER_CONFIG_DIR:-$XDG_CONFIG_HOME/cc-switcher}"
-readonly DATA_DIR="${CC_SWITCHER_DATA_DIR:-$XDG_DATA_HOME/cc-switcher}"
-readonly CACHE_DIR="${CC_SWITCHER_CACHE_DIR:-$XDG_CACHE_HOME/cc-switcher}"
+readonly CONFIG_DIR="${CCSWITCH_CONFIG_DIR:-$XDG_CONFIG_HOME/ccswitch}"
+readonly DATA_DIR="${CCSWITCH_DATA_DIR:-$XDG_DATA_HOME/ccswitch}"
+readonly CACHE_DIR="${CCSWITCH_CACHE_DIR:-$XDG_CACHE_HOME/ccswitch}"
 
 # Default bin directory: ~/.local/bin on Linux (XDG standard), ~/bin on macOS
-if [[ -z "${CC_SWITCHER_BIN:-}" ]]; then
+if [[ -z "${CCSWITCH_BIN:-}" ]]; then
   if [[ "$(uname -s)" == "Darwin" ]]; then
     BIN_DIR="$HOME/bin"
   else
     BIN_DIR="$HOME/.local/bin"
   fi
 else
-  BIN_DIR="$CC_SWITCHER_BIN"
+  BIN_DIR="$CCSWITCH_BIN"
 fi
 
 readonly CONFIG_FILE="$CONFIG_DIR/config"
@@ -64,14 +64,14 @@ readonly SECRETS_FILE="$DATA_DIR/secrets.env"
 # GLOBAL FLAGS (can be set via env vars)
 # =============================================================================
 
-VERBOSE="${CC_SWITCHER_VERBOSE:-0}"
-DEBUG="${CC_SWITCHER_DEBUG:-0}"
-QUIET="${CC_SWITCHER_QUIET:-0}"
-YES_MODE="${CC_SWITCHER_YES:-0}"
-NO_INPUT="${CC_SWITCHER_NO_INPUT:-0}"
-NO_BANNER="${CC_SWITCHER_NO_BANNER:-0}"
-OUTPUT_FORMAT="${CC_SWITCHER_OUTPUT_FORMAT:-human}"  # human, json, plain
-DEFAULT_PROVIDER="${CC_SWITCHER_DEFAULT_PROVIDER:-}"
+VERBOSE="${CCSWITCH_VERBOSE:-0}"
+DEBUG="${CCSWITCH_DEBUG:-0}"
+QUIET="${CCSWITCH_QUIET:-0}"
+YES_MODE="${CCSWITCH_YES:-0}"
+NO_INPUT="${CCSWITCH_NO_INPUT:-0}"
+NO_BANNER="${CCSWITCH_NO_BANNER:-0}"
+OUTPUT_FORMAT="${CCSWITCH_OUTPUT_FORMAT:-human}"  # human, json, plain
+DEFAULT_PROVIDER="${CCSWITCH_DEFAULT_PROVIDER:-}"
 
 # =============================================================================
 # TTY & COLOR DETECTION
@@ -337,8 +337,8 @@ migrate_from_clother() {
     # Migrate data directory
     mkdir -p "$DATA_DIR"
     if [[ -f "$old_data/secrets.env" ]]; then
-      # Copy and rename CLOTHER_* keys to CC_SWITCHER_*
-      sed 's/^CLOTHER_/CC_SWITCHER_/' "$old_data/secrets.env" > "$SECRETS_FILE"
+      # Copy and rename CLOTHER_* keys to CCSWITCH_*
+      sed 's/^CLOTHER_/CCSWITCH_/' "$old_data/secrets.env" > "$SECRETS_FILE"
       chmod 600 "$SECRETS_FILE"
       success "Migrated secrets from Clother"
     fi
@@ -356,7 +356,7 @@ migrate_from_clother() {
     log "Migration complete. Old Clother files preserved at:"
     log "  $old_data"
     log "  $old_config"
-    log "Run 'cc-switcher uninstall' on old installation separately if desired."
+    log "Run 'ccswitch uninstall' on old installation separately if desired."
   fi
 }
 
@@ -421,14 +421,14 @@ is_provider_configured() {
 # =============================================================================
 
 show_version() {
-  echo "CC-Switcher v$VERSION"
+  echo "CCSwitch v$VERSION"
 }
 
 show_brief_help() {
   cat << EOF
-${BOLD}CC-Switcher v$VERSION${NC} - Multi-provider launcher for Claude CLI
+${BOLD}CCSwitch v$VERSION${NC} - Multi-provider launcher for Claude CLI
 
-${BOLD}Usage:${NC} cc-switcher [options] <command>
+${BOLD}Usage:${NC} ccswitch [options] <command>
 
 ${BOLD}Commands:${NC}
   config       Configure a provider
@@ -438,37 +438,37 @@ ${BOLD}Commands:${NC}
   help         Show full help
 
 ${BOLD}Examples:${NC}
-  ${GREEN}cc-switcher config${NC}       Setup a provider
-  ${GREEN}cc-switcher-zai${NC}          Use Z.AI
+  ${GREEN}ccswitch config${NC}       Setup a provider
+  ${GREEN}ccswitch-zai${NC}          Use Z.AI
 
-Run ${CYAN}cc-switcher --help${NC} for full documentation.
+Run ${CYAN}ccswitch --help${NC} for full documentation.
 EOF
 }
 
 show_full_help() {
   cat << EOF
-${BOLD}CC-Switcher v$VERSION${NC}
+${BOLD}CCSwitch v$VERSION${NC}
 Multi-provider launcher for Claude CLI
 
 ${BOLD}USAGE${NC}
-  cc-switcher [options] <command> [args]
+  ccswitch [options] <command> [args]
 
 ${BOLD}EXAMPLES${NC}
-  ${GREEN}cc-switcher config${NC}                 # Interactive provider setup
-  ${GREEN}cc-switcher config zai${NC}             # Configure specific provider
-  ${GREEN}cc-switcher list${NC}                   # Show all profiles
-  ${GREEN}cc-switcher list --json${NC}            # Machine-readable output
-  ${GREEN}cc-switcher test${NC}                   # Verify all providers
-  ${GREEN}cc-switcher-zai${NC}                    # Launch Claude with Z.AI
-  ${GREEN}cc-switcher-or-gpt4o${NC}               # Launch with OpenRouter GPT-4o
+  ${GREEN}ccswitch config${NC}                 # Interactive provider setup
+  ${GREEN}ccswitch config zai${NC}             # Configure specific provider
+  ${GREEN}ccswitch list${NC}                   # Show all profiles
+  ${GREEN}ccswitch list --json${NC}            # Machine-readable output
+  ${GREEN}ccswitch test${NC}                   # Verify all providers
+  ${GREEN}ccswitch-zai${NC}                    # Launch Claude with Z.AI
+  ${GREEN}ccswitch-or-gpt4o${NC}               # Launch with OpenRouter GPT-4o
 
 ${BOLD}COMMANDS${NC}
   config [provider]    Configure a provider (interactive if no provider given)
   list                 List all configured profiles
   info <provider>      Show details for a provider
   test [provider]      Test provider connectivity
-  status               Show current CC-Switcher state
-  uninstall            Remove CC-Switcher completely
+  status               Show current CCSwitch state
+  uninstall            Remove CCSwitch completely
   help [command]       Show help (contextual if command given)
 
 ${BOLD}OPTIONS${NC}
@@ -512,21 +512,21 @@ ${BOLD}PROVIDERS${NC}
     custom             Anthropic-compatible endpoint
 
 ${BOLD}ENVIRONMENT${NC}
-  CC_SWITCHER_CONFIG_DIR   Config directory (default: ~/.config/cc-switcher)
-  CC_SWITCHER_DATA_DIR     Data directory (default: ~/.local/share/cc-switcher)
-  CC_SWITCHER_BIN          Binary directory (default: ~/.local/bin on Linux, ~/bin on macOS)
-  CC_SWITCHER_DEFAULT_PROVIDER  Default provider to use
-  CC_SWITCHER_VERBOSE      Enable verbose mode (1)
-  CC_SWITCHER_QUIET        Enable quiet mode (1)
-  CC_SWITCHER_YES          Auto-confirm prompts (1)
+  CCSWITCH_CONFIG_DIR   Config directory (default: ~/.config/ccswitch)
+  CCSWITCH_DATA_DIR     Data directory (default: ~/.local/share/ccswitch)
+  CCSWITCH_BIN          Binary directory (default: ~/.local/bin on Linux, ~/bin on macOS)
+  CCSWITCH_DEFAULT_PROVIDER  Default provider to use
+  CCSWITCH_VERBOSE      Enable verbose mode (1)
+  CCSWITCH_QUIET        Enable quiet mode (1)
+  CCSWITCH_YES          Auto-confirm prompts (1)
   NO_COLOR             Disable colors (standard)
 
 ${BOLD}FILES${NC}
-  ~/.config/cc-switcher/config       User configuration
-  ~/.local/share/cc-switcher/secrets.env  API keys (chmod 600)
-  \$BIN_DIR/cc-switcher-*             Provider launchers (see --bin-dir)
+  ~/.config/ccswitch/config       User configuration
+  ~/.local/share/ccswitch/secrets.env  API keys (chmod 600)
+  \$BIN_DIR/ccswitch-*             Provider launchers (see --bin-dir)
 
-${DIM}Documentation: $CC_SWITCHER_DOCS${NC}
+${DIM}Documentation: $CCSWITCH_DOCS${NC}
 EOF
 }
 
@@ -535,16 +535,16 @@ show_command_help() {
   case "$cmd" in
     config)
       cat << EOF
-${BOLD}cc-switcher config${NC} - Configure a provider
+${BOLD}ccswitch config${NC} - Configure a provider
 
 ${BOLD}USAGE${NC}
-  cc-switcher config              # Interactive menu
-  cc-switcher config <provider>   # Configure specific provider
+  ccswitch config              # Interactive menu
+  ccswitch config <provider>   # Configure specific provider
 
 ${BOLD}EXAMPLES${NC}
-  ${GREEN}cc-switcher config${NC}              # Show provider menu
-  ${GREEN}cc-switcher config zai${NC}          # Configure Z.AI
-  ${GREEN}cc-switcher config openrouter${NC}   # Configure OpenRouter
+  ${GREEN}ccswitch config${NC}              # Show provider menu
+  ${GREEN}ccswitch config zai${NC}          # Configure Z.AI
+  ${GREEN}ccswitch config openrouter${NC}   # Configure OpenRouter
 
 ${BOLD}PROVIDERS${NC}
   native, zai, zai-cn, minimax, minimax-cn, kimi,
@@ -554,19 +554,19 @@ EOF
       ;;
     list)
       cat << EOF
-${BOLD}cc-switcher list${NC} - List configured profiles
+${BOLD}ccswitch list${NC} - List configured profiles
 
 ${BOLD}USAGE${NC}
-  cc-switcher list [options]
+  ccswitch list [options]
 
 ${BOLD}OPTIONS${NC}
   --json    Output as JSON
   --plain   Plain text (for scripts)
 
 ${BOLD}EXAMPLES${NC}
-  ${GREEN}cc-switcher list${NC}                # Human-readable
-  ${GREEN}cc-switcher list --json${NC}         # For scripting
-  ${GREEN}cc-switcher list | grep zai${NC}     # Filter
+  ${GREEN}ccswitch list${NC}                # Human-readable
+  ${GREEN}ccswitch list --json${NC}         # For scripting
+  ${GREEN}ccswitch list | grep zai${NC}     # Filter
 EOF
       ;;
     *)
@@ -623,7 +623,7 @@ cmd_config() {
 
   # Interactive menu
   echo
-  draw_box "CC-SWITCHER CONFIGURATION" 54
+  draw_box "CCSWITCH CONFIGURATION" 54
   echo
 
   # Count configured
@@ -729,7 +729,7 @@ config_provider() {
   # Native needs no config
   if [[ -z "$keyvar" ]]; then
     success "Native Anthropic is ready"
-    suggest_next "Use it: ${GREEN}cc-switcher-native${NC}"
+    suggest_next "Use it: ${GREEN}ccswitch-native${NC}"
     return 0
   fi
 
@@ -744,8 +744,8 @@ config_provider() {
   success "API key saved"
 
   suggest_next \
-    "Use it: ${GREEN}cc-switcher-$provider${NC}" \
-    "Test it: ${GREEN}cc-switcher test $provider${NC}"
+    "Use it: ${GREEN}ccswitch-$provider${NC}" \
+    "Test it: ${GREEN}ccswitch test $provider${NC}"
 }
 
 config_openrouter() {
@@ -786,7 +786,7 @@ config_openrouter() {
   echo
   echo -e "${BOLD}Configured models:${NC}"
   local found=false
-  for f in "$BIN_DIR"/cc-switcher-or-*; do
+  for f in "$BIN_DIR"/ccswitch-or-*; do
     [[ -x "$f" ]] && { found=true; echo -e "  ${GREEN}$(basename "$f")${NC}"; }
   done
   $found || echo -e "  ${DIM}(none)${NC}"
@@ -807,7 +807,7 @@ config_openrouter() {
 
       save_secret "OPENROUTER_MODEL_$(echo "$name" | tr '[:lower:]-' '[:upper:]_')" "$model"
       generate_or_launcher "$name" "$model"
-      success "Created ${GREEN}cc-switcher-or-$name${NC}"
+      success "Created ${GREEN}ccswitch-or-$name${NC}"
       echo
     done
   fi
@@ -831,10 +831,10 @@ config_custom() {
 
   local keyvar; keyvar="$(echo "$name" | tr '[:lower:]-' '[:upper:]_')_API_KEY"
   save_secret "$keyvar" "$key"
-  save_secret "CC_SWITCHER_${keyvar}_BASE_URL" "$url"
+  save_secret "CCSWITCH_${keyvar}_BASE_URL" "$url"
 
   generate_launcher "$name" "$keyvar" "$url" "" ""
-  success "Created ${GREEN}cc-switcher-$name${NC}"
+  success "Created ${GREEN}ccswitch-$name${NC}"
 }
 
 config_local_provider() {
@@ -872,7 +872,7 @@ config_local_provider() {
       echo -e "  3. Start the server (port 1234)"
       echo
       echo -e "${BOLD}Usage:${NC}"
-      echo -e "  ${GREEN}cc-switcher-lmstudio --model <model-name>${NC}"
+      echo -e "  ${GREEN}ccswitch-lmstudio --model <model-name>${NC}"
       ;;
     llamacpp)
       echo -e "llama.cpp's llama-server with Anthropic-compatible API."
@@ -883,7 +883,7 @@ config_local_provider() {
       echo -e "     ${GREEN}./llama-server --model <model.gguf> --port 8000 --jinja${NC}"
       echo
       echo -e "${BOLD}Usage:${NC}"
-      echo -e "  ${GREEN}cc-switcher-llamacpp --model <model-name>${NC}"
+      echo -e "  ${GREEN}ccswitch-llamacpp --model <model-name>${NC}"
       ;;
   esac
 
@@ -892,7 +892,7 @@ config_local_provider() {
   # Regenerate launcher
   generate_local_launcher "$provider" "$baseurl" "$auth_token" "$model" ""
 
-  success "Ready to use: ${GREEN}cc-switcher-$provider${NC}"
+  success "Ready to use: ${GREEN}ccswitch-$provider${NC}"
   [[ -n "$model" ]] && echo -e "${DIM}Default model: $model${NC}"
 }
 
@@ -900,9 +900,9 @@ cmd_list() {
   load_secrets
 
   local -a profiles=()
-  for f in "$BIN_DIR"/cc-switcher-*; do
+  for f in "$BIN_DIR"/ccswitch-*; do
     [[ -x "$f" ]] || continue
-    local name; name=$(basename "$f" | sed 's/^cc-switcher-//')
+    local name; name=$(basename "$f" | sed 's/^ccswitch-//')
     profiles+=("$name")
   done
 
@@ -914,7 +914,7 @@ cmd_list() {
       first=false
       # Escape quotes for JSON safety
       local safe_p="${p//\"/\\\"}"
-      echo -n "{\"name\":\"$safe_p\",\"command\":\"cc-switcher-$safe_p\"}"
+      echo -n "{\"name\":\"$safe_p\",\"command\":\"ccswitch-$safe_p\"}"
     done
     echo ']}'
     return
@@ -922,7 +922,7 @@ cmd_list() {
 
   if [[ ${#profiles[@]} -eq 0 ]]; then
     warn "No profiles configured"
-    suggest_next "Configure one: ${GREEN}cc-switcher config${NC}"
+    suggest_next "Configure one: ${GREEN}ccswitch config${NC}"
     return
   fi
 
@@ -940,12 +940,12 @@ cmd_list() {
     echo -e "  $status ${YELLOW}$p${NC}"
   done
   echo
-  echo -e "${DIM}Run: ${NC}${GREEN}cc-switcher-<name>${NC}"
+  echo -e "${DIM}Run: ${NC}${GREEN}ccswitch-<name>${NC}"
 }
 
 cmd_info() {
   local provider="${1:-}"
-  [[ -z "$provider" ]] && { error "Usage: cc-switcher info <provider>"; return 1; }
+  [[ -z "$provider" ]] && { error "Usage: ccswitch info <provider>"; return 1; }
 
   load_secrets
 
@@ -989,9 +989,9 @@ cmd_test() {
     providers_to_test=("$provider")
   else
     # Get all configured providers
-    for f in "$BIN_DIR"/cc-switcher-*; do
+    for f in "$BIN_DIR"/ccswitch-*; do
       [[ -x "$f" ]] || continue
-      local name; name=$(basename "$f" | sed 's/^cc-switcher-//')
+      local name; name=$(basename "$f" | sed 's/^ccswitch-//')
       [[ "$name" != "native" ]] && providers_to_test+=("$name")
     done
   fi
@@ -1047,7 +1047,7 @@ cmd_status() {
   load_secrets
 
   echo
-  draw_box "CC-SWITCHER STATUS" 50
+  draw_box "CCSWITCH STATUS" 50
   echo
   echo -e "  Version:     ${BOLD}$VERSION${NC}"
   echo -e "  Config:      $CONFIG_DIR"
@@ -1056,7 +1056,7 @@ cmd_status() {
   echo
 
   local count=0
-  for f in "$BIN_DIR"/cc-switcher-*; do [[ -x "$f" ]] && ((++count)) || true; done
+  for f in "$BIN_DIR"/ccswitch-*; do [[ -x "$f" ]] && ((++count)) || true; done
   echo -e "  Profiles:    ${BOLD}$count${NC} installed"
 
   if [[ -n "$DEFAULT_PROVIDER" ]]; then
@@ -1066,19 +1066,19 @@ cmd_status() {
 
 cmd_uninstall() {
   echo
-  echo -e "${BOLD}Uninstall CC-Switcher${NC}"
+  echo -e "${BOLD}Uninstall CCSwitch${NC}"
   echo
   echo "This will remove:"
   echo -e "  ${DIM}${SYM_ARROW}${NC} $CONFIG_DIR"
   echo -e "  ${DIM}${SYM_ARROW}${NC} $DATA_DIR"
-  echo -e "  ${DIM}${SYM_ARROW}${NC} $BIN_DIR/cc-switcher*"
+  echo -e "  ${DIM}${SYM_ARROW}${NC} $BIN_DIR/ccswitch*"
   echo
 
-  confirm_danger "Remove all CC-Switcher files" "delete cc-switcher" || return 1
+  confirm_danger "Remove all CCSwitch files" "delete ccswitch" || return 1
 
   spinner_start "Removing files..."
-  rm -rf "$CONFIG_DIR" "$DATA_DIR" "$CACHE_DIR" "$BIN_DIR"/cc-switcher-* "$BIN_DIR/cc-switcher" 2>/dev/null || true
-  spinner_stop 0 "CC-Switcher uninstalled"
+  rm -rf "$CONFIG_DIR" "$DATA_DIR" "$CACHE_DIR" "$BIN_DIR"/ccswitch-* "$BIN_DIR/ccswitch" 2>/dev/null || true
+  spinner_stop 0 "CCSwitch uninstalled"
 }
 
 # =============================================================================
@@ -1090,11 +1090,11 @@ generate_launcher() {
 
   mkdir -p "$BIN_DIR"
 
-  cat > "$BIN_DIR/cc-switcher-$name" << LAUNCHER
+  cat > "$BIN_DIR/ccswitch-$name" << LAUNCHER
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "\${CC_SWITCHER_NO_BANNER:-}" != "1" && -t 1 ]] && cat "\${XDG_DATA_HOME:-\$HOME/.local/share}/cc-switcher/banner" 2>/dev/null && echo "    + $name" && echo
-SECRETS="\${XDG_DATA_HOME:-\$HOME/.local/share}/cc-switcher/secrets.env"
+[[ "\${CCSWITCH_NO_BANNER:-}" != "1" && -t 1 ]] && cat "\${XDG_DATA_HOME:-\$HOME/.local/share}/ccswitch/banner" 2>/dev/null && echo "    + $name" && echo
+SECRETS="\${XDG_DATA_HOME:-\$HOME/.local/share}/ccswitch/secrets.env"
 if [[ -f "\$SECRETS" ]]; then
   [[ -L "\$SECRETS" ]] && { echo "Error: secrets file is a symlink - refusing for security" >&2; exit 1; }
   source "\$SECRETS"
@@ -1102,14 +1102,14 @@ fi
 LAUNCHER
 
   if [[ -n "$keyvar" ]]; then
-    cat >> "$BIN_DIR/cc-switcher-$name" << LAUNCHER
-[[ -z "\${$keyvar:-}" ]] && { echo "Error: $keyvar not set. Run 'cc-switcher config'" >&2; exit 1; }
+    cat >> "$BIN_DIR/ccswitch-$name" << LAUNCHER
+[[ -z "\${$keyvar:-}" ]] && { echo "Error: $keyvar not set. Run 'ccswitch config'" >&2; exit 1; }
 export ANTHROPIC_AUTH_TOKEN="\$$keyvar"
 LAUNCHER
   fi
 
-  [[ -n "$baseurl" ]] && echo "export ANTHROPIC_BASE_URL=\"$baseurl\"" >> "$BIN_DIR/cc-switcher-$name"
-  [[ -n "$model" ]] && echo "export ANTHROPIC_MODEL=\"$model\"" >> "$BIN_DIR/cc-switcher-$name"
+  [[ -n "$baseurl" ]] && echo "export ANTHROPIC_BASE_URL=\"$baseurl\"" >> "$BIN_DIR/ccswitch-$name"
+  [[ -n "$model" ]] && echo "export ANTHROPIC_MODEL=\"$model\"" >> "$BIN_DIR/ccswitch-$name"
 
   # Parse model_opts
   if [[ -n "$model_opts" ]]; then
@@ -1117,16 +1117,16 @@ LAUNCHER
     for opt in "${opts[@]}"; do
       IFS='=' read -r key val <<< "$opt"
       case "$key" in
-        haiku)  echo "export ANTHROPIC_DEFAULT_HAIKU_MODEL=\"$val\"" >> "$BIN_DIR/cc-switcher-$name" ;;
-        sonnet) echo "export ANTHROPIC_DEFAULT_SONNET_MODEL=\"$val\"" >> "$BIN_DIR/cc-switcher-$name" ;;
-        opus)   echo "export ANTHROPIC_DEFAULT_OPUS_MODEL=\"$val\"" >> "$BIN_DIR/cc-switcher-$name" ;;
-        small)  echo "export ANTHROPIC_SMALL_FAST_MODEL=\"$val\"" >> "$BIN_DIR/cc-switcher-$name" ;;
+        haiku)  echo "export ANTHROPIC_DEFAULT_HAIKU_MODEL=\"$val\"" >> "$BIN_DIR/ccswitch-$name" ;;
+        sonnet) echo "export ANTHROPIC_DEFAULT_SONNET_MODEL=\"$val\"" >> "$BIN_DIR/ccswitch-$name" ;;
+        opus)   echo "export ANTHROPIC_DEFAULT_OPUS_MODEL=\"$val\"" >> "$BIN_DIR/ccswitch-$name" ;;
+        small)  echo "export ANTHROPIC_SMALL_FAST_MODEL=\"$val\"" >> "$BIN_DIR/ccswitch-$name" ;;
       esac
     done
   fi
 
-  echo 'exec claude "$@"' >> "$BIN_DIR/cc-switcher-$name"
-  chmod +x "$BIN_DIR/cc-switcher-$name"
+  echo 'exec claude "$@"' >> "$BIN_DIR/ccswitch-$name"
+  chmod +x "$BIN_DIR/ccswitch-$name"
 }
 
 generate_or_launcher() {
@@ -1136,16 +1136,16 @@ generate_or_launcher() {
 
   # OpenRouter now supports native Anthropic API format
   # No proxy needed - direct connection to https://openrouter.ai/api
-  cat > "$BIN_DIR/cc-switcher-or-$name" << LAUNCHER
+  cat > "$BIN_DIR/ccswitch-or-$name" << LAUNCHER
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "\${CC_SWITCHER_NO_BANNER:-}" != "1" && -t 1 ]] && cat "\${XDG_DATA_HOME:-\$HOME/.local/share}/cc-switcher/banner" 2>/dev/null && echo "    + OpenRouter: $name" && echo
-SECRETS="\${XDG_DATA_HOME:-\$HOME/.local/share}/cc-switcher/secrets.env"
+[[ "\${CCSWITCH_NO_BANNER:-}" != "1" && -t 1 ]] && cat "\${XDG_DATA_HOME:-\$HOME/.local/share}/ccswitch/banner" 2>/dev/null && echo "    + OpenRouter: $name" && echo
+SECRETS="\${XDG_DATA_HOME:-\$HOME/.local/share}/ccswitch/secrets.env"
 if [[ -f "\$SECRETS" ]]; then
   [[ -L "\$SECRETS" ]] && { echo "Error: secrets file is a symlink - refusing for security" >&2; exit 1; }
   source "\$SECRETS"
 fi
-[[ -z "\${OPENROUTER_API_KEY:-}" ]] && { echo "Error: OPENROUTER_API_KEY not set. Run 'cc-switcher config openrouter'" >&2; exit 1; }
+[[ -z "\${OPENROUTER_API_KEY:-}" ]] && { echo "Error: OPENROUTER_API_KEY not set. Run 'ccswitch config openrouter'" >&2; exit 1; }
 
 # OpenRouter native Anthropic API support
 export ANTHROPIC_BASE_URL="https://openrouter.ai/api"
@@ -1160,7 +1160,7 @@ export ANTHROPIC_SMALL_FAST_MODEL="$model"
 
 exec claude "\$@"
 LAUNCHER
-  chmod +x "$BIN_DIR/cc-switcher-or-$name"
+  chmod +x "$BIN_DIR/ccswitch-or-$name"
 }
 
 generate_local_launcher() {
@@ -1168,21 +1168,21 @@ generate_local_launcher() {
 
   mkdir -p "$BIN_DIR"
 
-  cat > "$BIN_DIR/cc-switcher-$name" << LAUNCHER
+  cat > "$BIN_DIR/ccswitch-$name" << LAUNCHER
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "\${CC_SWITCHER_NO_BANNER:-}" != "1" && -t 1 ]] && cat "\${XDG_DATA_HOME:-\$HOME/.local/share}/cc-switcher/banner" 2>/dev/null && echo "    + $name (local)" && echo
+[[ "\${CCSWITCH_NO_BANNER:-}" != "1" && -t 1 ]] && cat "\${XDG_DATA_HOME:-\$HOME/.local/share}/ccswitch/banner" 2>/dev/null && echo "    + $name (local)" && echo
 export ANTHROPIC_BASE_URL="$baseurl"
 LAUNCHER
 
   if [[ -n "$auth_token" ]]; then
-    cat >> "$BIN_DIR/cc-switcher-$name" << LAUNCHER
+    cat >> "$BIN_DIR/ccswitch-$name" << LAUNCHER
 export ANTHROPIC_AUTH_TOKEN="$auth_token"
 export ANTHROPIC_API_KEY=""
 LAUNCHER
   fi
 
-  [[ -n "$model" ]] && echo "export ANTHROPIC_MODEL=\"$model\"" >> "$BIN_DIR/cc-switcher-$name"
+  [[ -n "$model" ]] && echo "export ANTHROPIC_MODEL=\"$model\"" >> "$BIN_DIR/ccswitch-$name"
 
   # Parse model_opts
   if [[ -n "$model_opts" ]]; then
@@ -1190,16 +1190,16 @@ LAUNCHER
     for opt in "${opts[@]}"; do
       IFS='=' read -r key val <<< "$opt"
       case "$key" in
-        haiku)  echo "export ANTHROPIC_DEFAULT_HAIKU_MODEL=\"$val\"" >> "$BIN_DIR/cc-switcher-$name" ;;
-        sonnet) echo "export ANTHROPIC_DEFAULT_SONNET_MODEL=\"$val\"" >> "$BIN_DIR/cc-switcher-$name" ;;
-        opus)   echo "export ANTHROPIC_DEFAULT_OPUS_MODEL=\"$val\"" >> "$BIN_DIR/cc-switcher-$name" ;;
-        small)  echo "export ANTHROPIC_SMALL_FAST_MODEL=\"$val\"" >> "$BIN_DIR/cc-switcher-$name" ;;
+        haiku)  echo "export ANTHROPIC_DEFAULT_HAIKU_MODEL=\"$val\"" >> "$BIN_DIR/ccswitch-$name" ;;
+        sonnet) echo "export ANTHROPIC_DEFAULT_SONNET_MODEL=\"$val\"" >> "$BIN_DIR/ccswitch-$name" ;;
+        opus)   echo "export ANTHROPIC_DEFAULT_OPUS_MODEL=\"$val\"" >> "$BIN_DIR/ccswitch-$name" ;;
+        small)  echo "export ANTHROPIC_SMALL_FAST_MODEL=\"$val\"" >> "$BIN_DIR/ccswitch-$name" ;;
       esac
     done
   fi
 
-  echo 'exec claude "$@"' >> "$BIN_DIR/cc-switcher-$name"
-  chmod +x "$BIN_DIR/cc-switcher-$name"
+  echo 'exec claude "$@"' >> "$BIN_DIR/ccswitch-$name"
+  chmod +x "$BIN_DIR/ccswitch-$name"
 }
 
 
@@ -1209,7 +1209,7 @@ LAUNCHER
 
 do_install() {
   [[ "$NO_BANNER" != "1" ]] && echo -e "$BANNER"
-  echo -e "${BOLD}CC-Switcher $VERSION${NC}"
+  echo -e "${BOLD}CCSwitch $VERSION${NC}"
   echo
 
   migrate_from_clother
@@ -1227,10 +1227,10 @@ do_install() {
   # Back up secrets to temp file before cleaning (survives interruption)
   local secrets_tmp=""
   if [[ -f "$SECRETS_FILE" ]]; then
-    secrets_tmp=$(mktemp "${TMPDIR:-/tmp}/cc-switcher-secrets.XXXXXX")
+    secrets_tmp=$(mktemp "${TMPDIR:-/tmp}/ccswitch-secrets.XXXXXX")
     cp -p "$SECRETS_FILE" "$secrets_tmp"
   fi
-  rm -f "$BIN_DIR/cc-switcher" "$BIN_DIR"/cc-switcher-* 2>/dev/null || true
+  rm -f "$BIN_DIR/ccswitch" "$BIN_DIR"/ccswitch-* 2>/dev/null || true
   rm -rf "$CONFIG_DIR" "$DATA_DIR" "$CACHE_DIR" 2>/dev/null || true
 
   # Create directories (XDG compliant)
@@ -1249,13 +1249,13 @@ do_install() {
   generate_main_command
 
   # Generate native launcher
-  cat > "$BIN_DIR/cc-switcher-native" << 'EOF'
+  cat > "$BIN_DIR/ccswitch-native" << 'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "${CC_SWITCHER_NO_BANNER:-}" != "1" && -t 1 ]] && cat "${XDG_DATA_HOME:-$HOME/.local/share}/cc-switcher/banner" 2>/dev/null && echo "    + native" && echo
+[[ "${CCSWITCH_NO_BANNER:-}" != "1" && -t 1 ]] && cat "${XDG_DATA_HOME:-$HOME/.local/share}/ccswitch/banner" 2>/dev/null && echo "    + native" && echo
 exec claude "$@"
 EOF
-  chmod +x "$BIN_DIR/cc-switcher-native"
+  chmod +x "$BIN_DIR/ccswitch-native"
 
   # Generate standard launchers
   local providers=(zai zai-cn minimax minimax-cn kimi moonshot ve deepseek mimo)
@@ -1271,12 +1271,12 @@ EOF
   generate_local_launcher "llamacpp" "http://localhost:8000" "" "" ""
 
   # Verify
-  if ! "$BIN_DIR/cc-switcher" --version &>/dev/null; then
+  if ! "$BIN_DIR/ccswitch" --version &>/dev/null; then
     error "Installation verification failed"
     exit 1
   fi
 
-  success "Installed CC-Switcher v$VERSION"
+  success "Installed CCSwitch v$VERSION"
 
   # PATH warning
   if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
@@ -1289,37 +1289,37 @@ EOF
   fi
 
   suggest_next \
-    "Configure a provider: ${GREEN}cc-switcher config${NC}" \
-    "Use native Claude: ${GREEN}cc-switcher-native${NC}" \
-    "View help: ${GREEN}cc-switcher --help${NC}"
+    "Configure a provider: ${GREEN}ccswitch config${NC}" \
+    "Use native Claude: ${GREEN}ccswitch-native${NC}" \
+    "View help: ${GREEN}ccswitch --help${NC}"
 }
 
 generate_main_command() {
-  cat > "$BIN_DIR/cc-switcher" << 'MAINEOF'
+  cat > "$BIN_DIR/ccswitch" << 'MAINEOF'
 #!/usr/bin/env bash
 set -euo pipefail
 IFS=$'\n\t'
 umask 077
 
 # Re-exec with the full script for complex commands
-SCRIPT_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/cc-switcher"
-if [[ -f "$SCRIPT_DIR/cc-switcher-full.sh" ]]; then
-  exec bash "$SCRIPT_DIR/cc-switcher-full.sh" "$@"
+SCRIPT_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/ccswitch"
+if [[ -f "$SCRIPT_DIR/ccswitch-full.sh" ]]; then
+  exec bash "$SCRIPT_DIR/ccswitch-full.sh" "$@"
 fi
 
 # Fallback minimal implementation
-echo "CC-Switcher - Run installer to complete setup"
+echo "CCSwitch - Run installer to complete setup"
 MAINEOF
-  chmod +x "$BIN_DIR/cc-switcher"
+  chmod +x "$BIN_DIR/ccswitch"
 
   # Copy this script as the full implementation
   if [[ ! -f "${BASH_SOURCE[0]:-}" ]]; then
     # Piped execution - download from GitHub
-    curl -fsSL https://raw.githubusercontent.com/ggujunhi/cc-switcher/main/cc-switcher.sh > "$DATA_DIR/cc-switcher-full.sh"
+    curl -fsSL https://raw.githubusercontent.com/ggujunhi/ccswitch/main/ccswitch.sh > "$DATA_DIR/ccswitch-full.sh"
   else
-    cp "${BASH_SOURCE[0]}" "$DATA_DIR/cc-switcher-full.sh"
+    cp "${BASH_SOURCE[0]}" "$DATA_DIR/ccswitch-full.sh"
   fi
-  chmod +x "$DATA_DIR/cc-switcher-full.sh"
+  chmod +x "$DATA_DIR/ccswitch-full.sh"
 }
 
 # =============================================================================
@@ -1327,11 +1327,11 @@ MAINEOF
 # =============================================================================
 
 read -r -d '' BANNER << 'EOF' || true
-   ____ ____      ____          _ _       _
-  / ___/ ___|    / ___|_      _(_) |_ ___| |__   ___ _ __
- | |  | |   ____\___ \ \ /\ / / | __/ __| '_ \ / _ \ '__|
- | |__| |__|_____|__) \ V  V /| | || (__| | | |  __/ |
-  \____\____|   |____/ \_/\_/ |_|\__\___|_| |_|\___|_|
+   ____ ____ ____          _ _       _
+  / ___/ ___/ ___|_      _(_) |_ ___| |__
+ | |  | |   \___ \ \ /\ / / | __/ __| '_ \
+ | |__| |___ ___) \ V  V /| | || (__| | | |
+  \____\____|____/ \_/\_/ |_|\__\___|_| |_|
 EOF
 
 # =============================================================================
@@ -1386,7 +1386,7 @@ main() {
     *)
       error "Unknown command: $cmd"
       local suggestion; suggestion=$(suggest_command "$cmd")
-      [[ -n "$suggestion" ]] && echo -e "Did you mean: ${GREEN}cc-switcher $suggestion${NC}?"
+      [[ -n "$suggestion" ]] && echo -e "Did you mean: ${GREEN}ccswitch $suggestion${NC}?"
       exit 1
       ;;
   esac
@@ -1395,7 +1395,7 @@ main() {
 # If sourced, don't run main
 if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] || [[ ! -f "${BASH_SOURCE[0]:-}" ]]; then
   # Piped execution (curl | bash) or first run -> install
-  if [[ ! -f "${BASH_SOURCE[0]:-}" ]] || [[ ! -f "$BIN_DIR/cc-switcher" ]]; then
+  if [[ ! -f "${BASH_SOURCE[0]:-}" ]] || [[ ! -f "$BIN_DIR/ccswitch" ]]; then
     do_install
   else
     main "$@"
