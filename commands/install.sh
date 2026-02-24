@@ -201,6 +201,7 @@ LAUNCHER
     done
   fi
 
+  echo 'export _CCSWITCH_ROUTED=1' >> "$BIN_DIR/ccswitch-$name"
   echo 'exec claude "$@"' >> "$BIN_DIR/ccswitch-$name"
   chmod +x "$BIN_DIR/ccswitch-$name"
 }
@@ -246,6 +247,7 @@ LAUNCHER
     printf 'export ANTHROPIC_DEFAULT_SONNET_MODEL=%q\n' "$model"
     printf 'export ANTHROPIC_DEFAULT_HAIKU_MODEL=%q\n' "$model"
     printf 'export ANTHROPIC_SMALL_FAST_MODEL=%q\n' "$model"
+    echo 'export _CCSWITCH_ROUTED=1'
     echo 'exec claude "$@"'
   } >> "$BIN_DIR/ccswitch-or-$name"
 
@@ -292,6 +294,7 @@ LAUNCHER
     done
   fi
 
+  echo 'export _CCSWITCH_ROUTED=1' >> "$BIN_DIR/ccswitch-$name"
   echo 'exec claude "$@"' >> "$BIN_DIR/ccswitch-$name"
   chmod +x "$BIN_DIR/ccswitch-$name"
 }
@@ -362,6 +365,7 @@ do_install() {
 #!/usr/bin/env bash
 set -euo pipefail
 [[ "${CCSWITCH_NO_BANNER:-}" != "1" && -t 1 ]] && cat "${XDG_DATA_HOME:-$HOME/.local/share}/ccswitch/banner" 2>/dev/null && echo "    + native" && echo
+export _CCSWITCH_ROUTED=1
 exec claude "$@"
 EOF
   chmod +x "$BIN_DIR/ccswitch-native"
