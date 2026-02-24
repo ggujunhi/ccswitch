@@ -1,0 +1,11 @@
+# OMC plugin state (local-only)
+.omc/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor state
+*.swp
+*.swo
+*~
