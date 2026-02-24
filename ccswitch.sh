@@ -13,7 +13,7 @@ set -euo pipefail
 IFS=$'\n\t'
 umask 077
 
-readonly VERSION="1.4.1"
+readonly VERSION="1.4.2"
 readonly CCSWITCH_DOCS="https://github.com/ggujunhi/ccswitch"
 readonly CCSWITCH_RAW="https://raw.githubusercontent.com/ggujunhi/ccswitch/main/ccswitch.sh"
 readonly REGISTRY_URL="https://raw.githubusercontent.com/ggujunhi/ccswitch/main/models.json"
@@ -1756,8 +1756,19 @@ LAUNCHER
 # =============================================================================
 
 do_install() {
+  # Auto-bump patch version in source file on each install
+  local install_version="$VERSION"
+  if [[ -f "${BASH_SOURCE[0]:-}" ]]; then
+    local src="${BASH_SOURCE[0]}"
+    local major minor patch
+    IFS='.' read -r major minor patch <<< "$VERSION"
+    patch=$(( patch + 1 ))
+    install_version="$major.$minor.$patch"
+    sed -i "s/^readonly VERSION=\"$VERSION\"/readonly VERSION=\"$install_version\"/" "$src"
+  fi
+
   [[ "$NO_BANNER" != "1" ]] && echo -e "$BANNER"
-  echo -e "${BOLD}CCSwitch $VERSION${NC}"
+  echo -e "${BOLD}CCSwitch $install_version${NC}"
   echo
 
   migrate_from_clother
@@ -1843,7 +1854,7 @@ EOF
     exit 1
   fi
 
-  success "Installed CCSwitch v$VERSION"
+  success "Installed CCSwitch v${install_version:-$VERSION}"
 
   # PATH warning
   if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
@@ -2093,6 +2104,9 @@ main() {
 if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] || [[ ! -f "${BASH_SOURCE[0]:-}" ]]; then
   # Piped execution (curl | bash) or first run -> install
   if [[ ! -f "${BASH_SOURCE[0]:-}" ]] || [[ ! -f "$BIN_DIR/ccswitch" ]]; then
+    do_install
+  elif [[ -z "${1:-}" ]]; then
+    # Direct execution with no args from source -> reinstall
     do_install
   else
     main "$@"
