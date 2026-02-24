@@ -1956,19 +1956,8 @@ LAUNCHER
 # INSTALLATION
 
 do_install() {
-  # Auto-bump patch version in source file on each install
-  local install_version="$VERSION"
-  if [[ -f "${BASH_SOURCE[0]:-}" ]]; then
-    local src="${BASH_SOURCE[0]}"
-    local major minor patch
-    IFS='.' read -r major minor patch <<< "$VERSION"
-    patch=$(( patch + 1 ))
-    install_version="$major.$minor.$patch"
-    sed -i "s/^readonly VERSION=\"$VERSION\"/readonly VERSION=\"$install_version\"/" "$src"
-  fi
-
   [[ "$NO_BANNER" != "1" ]] && echo -e "$BANNER"
-  echo -e "${BOLD}CCSwitch $install_version${NC}"
+  echo -e "${BOLD}CCSwitch $VERSION${NC}"
   echo
 
   migrate_from_clother
@@ -2054,7 +2043,7 @@ EOF
     exit 1
   fi
 
-  success "Installed CCSwitch v${install_version:-$VERSION}"
+  success "Installed CCSwitch v$VERSION"
 
   # PATH warning
   if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
