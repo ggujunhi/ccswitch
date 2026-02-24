@@ -866,6 +866,7 @@ ${BOLD}Commands:${NC}
   list         List profiles
   info <name>  Provider details
   test         Test providers
+  default      Set default provider for 'claude'
   update       Check for updates
   help         Show full help
 
@@ -908,6 +909,7 @@ ${BOLD}COMMANDS${NC}
   list                 List all configured profiles
   info <provider>      Show details for a provider
   test [provider]      Test provider connectivity
+  default [provider]   Set default provider for 'claude' command
   status               Show current CCSwitch state
   update               Check for and install updates
   uninstall            Remove CCSwitch completely
@@ -1021,7 +1023,7 @@ EOF
 # Command suggestion (prefix/substring match)
 suggest_command() {
   local input="$1"
-  local -a commands=(config list info test status uninstall help)
+  local -a commands=(config list info test status default uninstall help)
   local best="" best_score=0
 
   for cmd in "${commands[@]}"; do
@@ -2232,6 +2234,9 @@ cmd_update() {
 
   log "New version available: ${GREEN}v$remote_version${NC} (current: v$VERSION)"
   do_self_update
+  # Exit immediately: do_self_update replaced ccswitch-full.sh which bash is
+  # currently reading by byte offset.  Continuing would read garbled content.
+  exit 0
 }
 
 # =============================================================================
