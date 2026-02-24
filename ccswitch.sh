@@ -1499,9 +1499,15 @@ cmd_test() {
     # errors but are fully operational for real API calls
     local http_code
     http_code=$(curl -s --max-time 5 -o /dev/null -w "%{http_code}" "$test_url" 2>/dev/null) || http_code=""
-    if [[ -n "$http_code" && "$http_code" != "000" ]]; then
+    
+    # Check for successful HTTP responses (2xx) - only these are truly "reachable"
+    if [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
       echo -e "${GREEN}${SYM_OK} reachable${NC} ${DIM}(HTTP $http_code)${NC}"
       ((++ok)) || true
+    elif [[ "$http_code" =~ ^[0-9][0-9][0-9]$ ]]; then
+      # 4xx (401, 403, 404) or 5xx errors - endpoint exists but has issues
+      echo -e "${RED}${SYM_ERR} error${NC} ${DIM}(HTTP $http_code)${NC}"
+      ((++fail)) || true
     else
       # HTTP failed or curl crashed -- fall back to TCP connect
       local host; host=$(echo "$test_url" | sed 's|https\?://\([^/:]*\).*|\1|')
