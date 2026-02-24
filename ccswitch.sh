@@ -290,7 +290,7 @@ load_secrets() {
   # Validate file format before sourcing
   local line_num=0
   while IFS= read -r line || [[ -n "$line" ]]; do
-    ((line_num++))
+    ((++line_num))
     # Skip empty lines and comments
     [[ -z "$line" ]] && continue
     [[ "$line" =~ ^[[:space:]]*# ]] && continue
